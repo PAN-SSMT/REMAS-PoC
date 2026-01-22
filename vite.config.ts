@@ -5,12 +5,12 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(() => {
   return {
     plugins: [react()],
+    base: "/REMAS-PoC/",
     server: {
       port: 3003,
       host: '0.0.0.0',
       strictPort: false,
     },
-    base: "/REMAS-PoC/",
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './'),

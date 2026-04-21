@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import AppNavigation from './components/shared/AppNavigation';
 import Modal from './components/shared/Modal';
+import CapacityForecast from './components/CapacityForecast';
+import FindBestMatch from './components/FindBestMatch';
+import { MatchResult, findBestMatches } from './components/MatchingEngine';
+import { getConsultantForecast } from './utils/forecastUtils';
 
 
 // Placeholder data for initial UI
@@ -641,8 +645,7 @@ const MOCK_PROJECTS = [
   },
 ];
 
-// Detailed ProServe project information
-const PROSERVE_PROJECT_DETAILS: Record<string, {
+type ProServeProjectDetail = {
   assignedClient: string;
   clarizenProjectId: string;
   areasOfSupport: string[];
@@ -656,9 +659,13 @@ const PROSERVE_PROJECT_DETAILS: Record<string, {
   nextWorkingSession: string;
   totalSessionsPerWeek: number;
   approxRemainingSessions: number;
+  totalPurchasedSessions: number;
   approxCompletionDate: string;
   notes: string;
-}> = {
+};
+
+// Detailed ProServe project information
+const PROSERVE_PROJECT_DETAILS_BASE: Record<string, Omit<ProServeProjectDetail, 'totalPurchasedSessions'>> = {
   'p1': {
     assignedClient: 'Acme Corp',
     clarizenProjectId: 'P-1234567',
@@ -1273,6 +1280,23 @@ const PROSERVE_PROJECT_DETAILS: Record<string, {
   },
 };
 
+const PROSERVE_PROJECT_DETAILS: Record<string, ProServeProjectDetail> = Object.fromEntries(
+  Object.entries(PROSERVE_PROJECT_DETAILS_BASE).map(([projectId, details]) => {
+    const noteText = details.notes.toLowerCase();
+    const isOnHold = noteText.includes('on hold');
+    const completionFactor = isOnHold ? 0.1 : details.workingSessionsScheduled === 'Yes' ? 0.6 : 0.2;
+    const estimatedCompleted = Math.round(details.approxRemainingSessions * completionFactor);
+
+    return [
+      projectId,
+      {
+        ...details,
+        totalPurchasedSessions: details.approxRemainingSessions + estimatedCompleted,
+      },
+    ];
+  }),
+) as Record<string, ProServeProjectDetail>;
+
 // Consultant Cortex Cloud Skills Assessment Data
 interface ConsultantSkillsAssessment {
   // Platform & General (1-5)
@@ -1718,6 +1742,69 @@ const NON_PROSERVE_SKILLS: Record<string, NonProServeSkillsAssessment> = {
   },
 };
 
+type SkillGroupKey = 'cspm' | 'cwp' | 'cas' | 'aut';
+type SubSkillDefinition = { key: string; label: string };
+
+const PROSERVE_SUB_SKILL_GROUPS: Record<SkillGroupKey, SubSkillDefinition[]> = {
+  cspm: [
+    { key: 'securityPoliciesRules', label: 'Security Policies & Rules' },
+    { key: 'attackSurfaceRules', label: 'Attack Surface Rules' },
+    { key: 'agentlessScanning', label: 'Agentless Scanning' },
+    { key: 'ciemIdentityPermission', label: 'CIEM (Identity & Permissions)' },
+    { key: 'dspmDataSecurity', label: 'DSPM (Data Security)' },
+    { key: 'aispmAiInventory', label: 'AI-SPM (AI Inventory)' },
+  ],
+  cwp: [
+    { key: 'xdrAgents', label: 'XDR Agents' },
+    { key: 'kspmConnectors', label: 'KSPM (Kubernetes)' },
+    { key: 'registryScanning', label: 'Registry Scanning' },
+    { key: 'serverlessScanning', label: 'Serverless Security' },
+    { key: 'cwpRulesPolicies', label: 'CWP Rules & Policies' },
+    { key: 'vulnerabilityPolicies', label: 'Vulnerability Management' },
+    { key: 'vulnerabilityRemediation', label: 'Vulnerability Remediation' },
+  ],
+  cas: [
+    { key: 'vcsGitHub', label: 'VCS: GitHub' },
+    { key: 'vcsGitLab', label: 'VCS: GitLab' },
+    { key: 'cicdGitHubActions', label: 'CI/CD: GitHub Actions' },
+    { key: 'cicdGitLabCi', label: 'CI/CD: GitLab CI' },
+    { key: 'cicdTerraformCloud', label: 'CI/CD: Terraform Cloud' },
+    { key: 'appSecRulesPolicies', label: 'AppSec Rules & Policies' },
+    { key: 'appSecFindings', label: 'AppSec Findings' },
+  ],
+  aut: [
+    { key: 'automationPlaybooks', label: 'Automation Playbooks' },
+    { key: 'cortexCloudApi', label: 'Cortex Cloud API' },
+    { key: 'pythonSkills', label: 'Python Skills' },
+  ],
+};
+
+const NON_PROSERVE_SUB_SKILL_GROUPS: Record<SkillGroupKey, SubSkillDefinition[]> = {
+  cspm: [
+    { key: 'cspmPolicyCreation', label: 'Policy Creation' },
+    { key: 'cspmAlertTriage', label: 'Alert Triage' },
+    { key: 'cspmComplianceFramework', label: 'Compliance Frameworks' },
+    { key: 'cspmCustomPolicyRql', label: 'Custom Policy (RQL)' },
+  ],
+  cwp: [
+    { key: 'cwppVulnerabilityManagement', label: 'Vulnerability Management' },
+    { key: 'cwppRuntimeProtection', label: 'Runtime Protection' },
+    { key: 'cwppContainerDefenders', label: 'Container Defenders' },
+    { key: 'cwppServerlessSecurity', label: 'Serverless Security' },
+    { key: 'cwppRegistryScanner', label: 'Registry Scanner' },
+  ],
+  cas: [
+    { key: 'ciemLeastPrivilege', label: 'Least Privilege Analysis' },
+    { key: 'ciemNetworkFlowAnalysis', label: 'Network Flow Analysis' },
+    { key: 'ciemOverPrivilegedEntities', label: 'Over-Privileged Entities' },
+  ],
+  aut: [
+    { key: 'xsoarPlaybookDev', label: 'XSOAR Playbooks' },
+    { key: 'xsoarToolIntegration', label: 'Tool Integration' },
+    { key: 'xsoarIncidentAutomation', label: 'Incident Automation' },
+  ],
+};
+
 interface Consultant {
   id: string;
   name: string;
@@ -1731,6 +1818,7 @@ interface Consultant {
 const App: React.FC = () => {
   const [consultants, setConsultants] = useState<Consultant[]>(MOCK_CONSULTANTS);
   const [selectedConsultant, setSelectedConsultant] = useState<string | null>(null);
+  const [expandedSkillGroup, setExpandedSkillGroup] = useState<SkillGroupKey | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState<Consultant | null>(null);
@@ -1744,107 +1832,333 @@ const App: React.FC = () => {
   const [projectTypeFilter, setProjectTypeFilter] = useState<string | null>(null);
   const [teamTypeFilter, setTeamTypeFilter] = useState<string | null>(null);
   const [isAvailabilityPopupOpen, setIsAvailabilityPopupOpen] = useState(false);
+  const [isCapacityForecastOpen, setIsCapacityForecastOpen] = useState(false);
   const [isConsultantProjectsModalOpen, setIsConsultantProjectsModalOpen] = useState(false);
   const [selectedProServeProject, setSelectedProServeProject] = useState<string | null>(null);
   const [isSkillsModalOpen, setIsSkillsModalOpen] = useState(false);
+  const [isFindBestMatchOpen, setIsFindBestMatchOpen] = useState(false);
+  const [matchTargetProject, setMatchTargetProject] = useState<string | null>(null);
+  const [matchResults, setMatchResults] = useState<MatchResult[]>([]);
   const [isUtilizationCalendarOpen, setIsUtilizationCalendarOpen] = useState(false);
+  const [calendarSlots, setCalendarSlots] = useState<Record<string, ('booked' | 'available' | 'selected')[]>>({});
+  const [isBookingFormOpen, setIsBookingFormOpen] = useState(false);
+  const [bookingFormData, setBookingFormData] = useState({ customerName: '', projectId: '', weeksToBook: 1 });
+  const [bookingError, setBookingError] = useState<string>('');
+  const [isManualBookingEntry, setIsManualBookingEntry] = useState(false);
+  const [slotBookingDetails, setSlotBookingDetails] = useState<Record<string, Record<number, { customerName: string; projectId: string; weeksToBook: number; bookedDate: string }>>>({});
+  const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
+  const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
+  const [currentWeek, setCurrentWeek] = useState(0); // 0-11 for weeks 1-12
+  const [isWeekSelectorOpen, setIsWeekSelectorOpen] = useState(false);
+  const [selectedWeekForDetails, setSelectedWeekForDetails] = useState(0);
+  const [pendingBookingSlotIndices, setPendingBookingSlotIndices] = useState<number[]>([]);
+  const [showRemovalOptions, setShowRemovalOptions] = useState(false);
+  const [isWeekMetricFlashing, setIsWeekMetricFlashing] = useState(false);
+
+  const closeDetailsModal = () => {
+    setIsDetailsModalOpen(false);
+    setExpandedSkillGroup(null);
+  };
+
+  useEffect(() => {
+    if (!isUtilizationCalendarOpen) return;
+    setIsWeekMetricFlashing(true);
+    const timeoutId = setTimeout(() => setIsWeekMetricFlashing(false), 300);
+    return () => clearTimeout(timeoutId);
+  }, [currentWeek, isUtilizationCalendarOpen]);
 
   const getUtilizationColor = (utilization: number) => {
-    if (utilization >= 80) return 'text-red-600 bg-red-100';
-    if (utilization >= 60) return 'text-yellow-600 bg-yellow-100';
-    return 'text-green-600 bg-green-100';
+    if (utilization >= 80) return 'bg-[#F3E8E8] text-[#943838] border border-[#DCC0C0]';
+    if (utilization >= 60) return 'bg-[#F6F1E4] text-[#8B6E28] border border-[#D9CFA0]';
+    return 'bg-[#E8F5EE] text-[#2D7A56] border border-[#B0D9C2]';
   };
 
   const getWspwColor = (wspw: number) => {
-    if (wspw >= 9) return 'text-red-600 bg-red-100';
-    if (wspw >= 6) return 'text-yellow-600 bg-yellow-100';
-    return 'text-green-600 bg-green-100';
+    if (wspw >= 9) return 'bg-[#F3E8E8] text-[#943838] border border-[#DCC0C0]';
+    if (wspw >= 6) return 'bg-[#F6F1E4] text-[#8B6E28] border border-[#D9CFA0]';
+    return 'bg-[#E8F5EE] text-[#2D7A56] border border-[#B0D9C2]';
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Unassigned':
-        return 'bg-orange-100 text-orange-700';
+        return 'bg-orange-50 text-orange-700 border border-orange-200';
       case 'InProgress':
-        return 'bg-blue-100 text-blue-700';
+        return 'bg-[#F0F9FF] text-[#0369A1] border border-[#BAE6FD]';
+      case 'OnHold':
+        return 'bg-amber-50 text-amber-700 border border-amber-200';
       case 'Completed':
-        return 'bg-green-100 text-green-700';
+        return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
       default:
-        return 'bg-gray-100 text-gray-700';
+        return 'bg-slate-100 text-slate-700 border border-slate-200';
     }
   };
 
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'ProServe':
-        return 'bg-purple-100 text-purple-700';
-      case 'EE':
-        return 'bg-blue-100 text-blue-700';
-      case 'Automation':
-        return 'bg-cyan-100 text-cyan-700';
+  const formatStatus = (status: string) => {
+    switch (status) {
+      case 'InProgress':
+        return 'In Progress';
+      case 'OnHold':
+        return 'On Hold';
       case 'ScaleOptimize':
-        return 'bg-emerald-100 text-emerald-700';
+        return 'Scale & Optimize';
       default:
-        return 'bg-gray-100 text-gray-700';
+        return status;
     }
   };
+
+  const formatProjectType = (type: string) => {
+    if (type === 'ScaleOptimize') return 'Scale & Optimize';
+    return type;
+  };
+
+  const getProjectTypeBadgeClass = (type: string) => {
+    switch (type) {
+      case 'ProServe':
+        return 'bg-[#F0EDF5] text-[#5A4A6B]';
+      case 'EE':
+        return 'bg-[#EDF2F7] text-[#4A5A6B]';
+      case 'Automation':
+        return 'bg-[#EDF5F5] text-[#4A6B6B]';
+      case 'ScaleOptimize':
+        return 'bg-[#EDF5F0] text-[#4A6B5A]';
+      default:
+        return 'bg-slate-100 text-slate-700';
+    }
+  };
+
+  const getProjectFilterChipClass = (type: string | null, isActive: boolean) => {
+    if (isActive) {
+      return 'bg-[#1A535C] text-white border border-[#1A535C]';
+    }
+
+    switch (type) {
+      case 'ProServe':
+        return 'bg-[#F0EDF5] text-[#5A4A6B] border border-[#E0D8EB] hover:brightness-95';
+      case 'EE':
+        return 'bg-[#EDF2F7] text-[#4A5A6B] border border-[#D8E2ED] hover:brightness-95';
+      case 'Automation':
+        return 'bg-[#EDF5F5] text-[#4A6B6B] border border-[#D8EBEB] hover:brightness-95';
+      case 'ScaleOptimize':
+        return 'bg-[#EDF5F0] text-[#4A6B5A] border border-[#D8EBE0] hover:brightness-95';
+      default:
+        return 'bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200';
+    }
+  };
+
+  const getTeamFilterChipClass = (isActive: boolean) =>
+    isActive
+      ? 'bg-[#1A535C] text-white border border-[#1A535C]'
+      : 'bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200';
+
+  const teamFilterCounts = {
+    all: consultants.length,
+    proServe: consultants.filter(c => projects.some(p => p.assignedTo === c.name && p.type === 'ProServe')).length,
+    ee: consultants.filter(c => projects.some(p => p.assignedTo === c.name && p.type === 'EE')).length,
+    automation: consultants.filter(c => projects.some(p => p.assignedTo === c.name && p.type === 'Automation')).length,
+    scaleOptimize: consultants.filter(c => projects.some(p => p.assignedTo === c.name && p.type === 'ScaleOptimize')).length,
+  };
+  const unassignedProjects = projects.filter(p => p.status === 'Unassigned');
+  const filteredUnassignedProjects = unassignedProjects.filter(
+    p => projectTypeFilter === null || p.type === projectTypeFilter,
+  );
+  const filteredTeamConsultants = consultants.filter(
+    c => teamTypeFilter === null || projects.some(p => p.assignedTo === c.name && p.type === teamTypeFilter),
+  );
+  const projectFilterCounts = {
+    all: unassignedProjects.length,
+    proServe: unassignedProjects.filter(p => p.type === 'ProServe').length,
+    ee: unassignedProjects.filter(p => p.type === 'EE').length,
+    automation: unassignedProjects.filter(p => p.type === 'Automation').length,
+    scaleOptimize: unassignedProjects.filter(p => p.type === 'ScaleOptimize').length,
+  };
+
+  type ProServePhaseDetails = (typeof PROSERVE_PROJECT_DETAILS)[string];
+  const phaseSteps: Array<{ key: keyof Pick<ProServePhaseDetails, 'projectStarted' | 'internalKickOffCompleted' | 'externalKickOffCompleted' | 'technicalAssessmentCompleted' | 'workingSessionsScheduled'>; label: string }> = [
+    { key: 'projectStarted', label: 'Started' },
+    { key: 'internalKickOffCompleted', label: 'Int.' },
+    { key: 'externalKickOffCompleted', label: 'Ext.' },
+    { key: 'technicalAssessmentCompleted', label: 'Assess.' },
+    { key: 'workingSessionsScheduled', label: 'Sessions' },
+  ];
+
+  const renderProServePhaseIndicator = (details: ProServePhaseDetails) => {
+    const firstIncompleteIndex = phaseSteps.findIndex(step => details[step.key] !== 'Yes');
+    const completedCount = firstIncompleteIndex === -1 ? phaseSteps.length : firstIncompleteIndex;
+    const activeIndex = firstIncompleteIndex === -1 ? null : firstIncompleteIndex;
+
+    return (
+      <div className="mt-2 w-full">
+        <div className="flex items-start w-full pb-5">
+          {phaseSteps.map((step, index) => {
+            const isCompleted = index < completedCount;
+            const isActive = activeIndex === index;
+            const showConnector = index < phaseSteps.length - 1;
+            const rightDotIndex = index + 1;
+            const rightDotCompleted = rightDotIndex < completedCount;
+            const rightDotActive = activeIndex === rightDotIndex;
+            const connectorCompleted = rightDotCompleted || rightDotActive;
+
+            return (
+              <React.Fragment key={step.key}>
+                <div className="relative flex flex-col items-center w-3 shrink-0">
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      isCompleted
+                        ? 'bg-green-500'
+                        : isActive
+                        ? 'bg-[#1A535C] ring-2 ring-[#1A535C]/30 ring-offset-1'
+                        : 'bg-slate-300'
+                    }`}
+                  />
+                  <span className="absolute top-4 left-1/2 -translate-x-1/2 w-16 text-[9px] text-gray-600 leading-tight text-center">
+                    {step.label}
+                  </span>
+                </div>
+                {showConnector && (
+                  <div className={`flex-1 h-[2px] mt-[5px] ${connectorCompleted ? 'bg-green-500' : 'bg-slate-300'}`} />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const getProjectTitleWithoutClient = (title: string, assignedClient?: string) => {
+    if (!assignedClient) return title;
+    const suffix = ` - ${assignedClient}`;
+    return title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;
+  };
+
+  const getConsultantAvailabilityIndicator = (consultant: Consultant) => {
+    const hasProServeProjects = projects.some((project) => project.assignedTo === consultant.name && project.type === 'ProServe');
+
+    if (!hasProServeProjects) {
+      if (consultant.utilization < 70) {
+        return { text: 'Available now', className: 'text-[#2D7A56]' };
+      }
+      return { text: 'Limited capacity', className: 'text-[#8B6E28]' };
+    }
+
+    const forecast = getConsultantForecast(consultant, projects, PROSERVE_PROJECT_DETAILS);
+
+    if (forecast.weeklyUtilization[0] < 70) {
+      return { text: 'Available now', className: 'text-[#2D7A56]' };
+    }
+
+    if (forecast.firstAvailableWeek !== null && forecast.firstAvailableWeek <= 12) {
+      return { text: `Available Wk ${forecast.firstAvailableWeek}`, className: 'text-[#8B6E28]' };
+    }
+
+    return { text: 'Fully booked', className: 'text-[#943838]' };
+  };
+
+  const openFindBestMatchForProject = (projectId: string) => {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return;
+
+    const results = findBestMatches(project, consultants, projects, PROSERVE_PROJECT_DETAILS);
+    setMatchResults(results);
+    setMatchTargetProject(projectId);
+    setIsFindBestMatchOpen(true);
+  };
+
+  const handleAssignBestMatch = (consultantId: string, consultantName: string) => {
+    if (!matchTargetProject) return;
+
+    setProjects((prevProjects) =>
+      prevProjects.map((project) =>
+        project.id === matchTargetProject
+          ? {
+              ...project,
+              assignedTo: consultantName,
+              status: 'InProgress',
+            }
+          : project,
+      ),
+    );
+
+    setConsultants((prevConsultants) =>
+      prevConsultants.map((consultant) =>
+        consultant.id === consultantId
+          ? {
+              ...consultant,
+              currentProjects: consultant.currentProjects + 1,
+            }
+          : consultant,
+      ),
+    );
+
+    setIsFindBestMatchOpen(false);
+    setMatchTargetProject(null);
+    setMatchResults([]);
+  };
+
+  const activeMatchProject = matchTargetProject ? projects.find((project) => project.id === matchTargetProject) : null;
 
   return (
     <div className="flex flex-col h-screen w-screen text-gray-900">
       {/* Header - Same style as NOVA */}
-      <header className="p-4 md:px-8 md:py-5 border-b border-gray-200 bg-white shadow-sm flex-shrink-0">
+      <header className="p-4 md:px-8 md:py-2 border-b border-gray-200 bg-white shadow-sm flex-shrink-0">
         <div className="flex justify-between items-center">
-          <img src="./assets/REMAS Logo.png" alt="REMAS - Resource Management & Assignment System" className="h-[84px]" />
+          <img src="/REMAS-PoC/assets/REMAS Logo.png" alt="REMAS - Resource Management & Assignment System" className="h-[50px]" />
           <div className="flex flex-col items-end">
-            <img src="./assets/PaloAltoLogo.png" alt="Palo Alto Networks" className="h-[82px]" />
+            <img src="/REMAS-PoC/assets/PaloAltoLogo.png" alt="Palo Alto Networks" className="h-[48px]" />
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex flex-1 overflow-hidden bg-gray-50 p-3 md:p-4 gap-3 md:gap-4">
+      <main className="flex flex-1 overflow-hidden bg-slate-300 p-3 md:p-4 gap-3 md:gap-4">
         {/* Left Column - Stats & AI Assistant */}
         <div className="w-1/3 min-w-[350px] max-w-[450px] flex flex-col gap-3 md:gap-4">
           {/* Availability Widget */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <h2 className="text-lg font-semibold text-gray-900">Availability</h2>
-              <button
-                onClick={() => setIsAvailabilityPopupOpen(true)}
-                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                title="Open in popup"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-4.5 0L18 6m0 0h-4.5m4.5 0v4.5" />
-                </svg>
-              </button>
+          <div className="bg-white rounded-xl shadow-md border border-slate-200/60 p-4">
+            <div className="flex items-center mb-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-gray-900">Availability</h2>
+                <button
+                  onClick={() => setIsAvailabilityPopupOpen(true)}
+                  className="text-[10px] text-[#1A535C] hover:text-[#143F47] cursor-pointer transition-colors"
+                >
+                  View All
+                </button>
               </div>
+              <button
+                onClick={() => setIsCapacityForecastOpen(true)}
+                className="ml-auto px-2.5 py-1 text-xs font-medium rounded-full bg-[#E6F2F4] text-[#1A535C] hover:bg-[#D1E8EC] transition-colors"
+              >
+                Capacity Forecast
+              </button>
+            </div>
             <div className="grid grid-cols-4 gap-2">
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-900">CSPM</p>
-                <p className="text-lg font-bold text-yellow-600">72%</p>
+                <p className="text-lg font-semibold text-[#8B6E28]">72%</p>
             </div>
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-900">CWP</p>
-                <p className="text-lg font-bold text-yellow-600">65%</p>
+                <p className="text-lg font-semibold text-[#8B6E28]">65%</p>
                   </div>
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-900">CAS</p>
-                <p className="text-lg font-bold text-green-600">58%</p>
+                <p className="text-lg font-semibold text-[#2D7A56]">58%</p>
                   </div>
               <div className="text-center">
                 <p className="text-sm font-medium text-gray-900">AUT</p>
-                <p className="text-lg font-bold text-red-600">81%</p>
+                <p className="text-lg font-semibold text-[#943838]">81%</p>
                 </div>
             </div>
           </div>
 
           {/* AI Chat Placeholder */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col">
-            <div className="p-4 border-b border-gray-200">
+          <div className="bg-white rounded-xl shadow-md border border-slate-200/60 flex-1 flex flex-col">
+            <div className="p-4 border-b border-slate-100">
               <h2 className="text-lg font-semibold text-gray-900">REMAS Advisor</h2>
             </div>
-            <div className="flex-1 p-4 flex items-center justify-center text-gray-400">
+            <div className="flex-1 p-4 flex items-center justify-center text-gray-400 bg-slate-50">
               <div className="text-center">
                 <svg className="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -1852,14 +2166,14 @@ const App: React.FC = () => {
                 <p className="text-sm">Ask questions about consultants, projects, or availability</p>
               </div>
             </div>
-            <div className="p-4 border-t border-gray-200">
+            <div className="p-4 border-t border-slate-200 bg-white">
               <div className="flex gap-2">
                 <input
                   type="text"
                   placeholder="Who's available for a CSPM project?"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
                 />
-                <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                <button className="px-4 py-2 bg-[#1A535C] text-white rounded-lg hover:bg-[#143F47] transition-colors">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                   </svg>
@@ -1872,87 +2186,72 @@ const App: React.FC = () => {
         {/* Right Column - Project Queue & Team Overview */}
         <div className="flex-1 flex flex-col gap-3 md:gap-4">
           {/* Project Queue */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-[280px] flex flex-col min-h-0">
-            <div className="p-4 border-b border-gray-200 flex-shrink-0">
+          <div className="bg-white rounded-xl shadow-md border border-slate-200/60 h-[280px] flex flex-col min-h-0">
+            <div className="p-4 border-b border-slate-100 flex-shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold text-gray-900">Projects</h2>
                   <button
                     onClick={() => setIsProjectQueuePopupOpen(true)}
-                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                    title="Open in popup"
+                  className="text-[10px] text-[#1A535C] hover:text-[#143F47] cursor-pointer transition-colors"
                   >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-4.5 0L18 6m0 0h-4.5m4.5 0v4.5" />
-                    </svg>
+                    View All
                   </button>
-                  <div className="flex items-center gap-1 ml-2">
+                </div>
+                <button className="text-sm text-[#1A535C] hover:text-[#143F47] font-medium">
+                  + Add Project
+                </button>
+              </div>
+              <div className="mt-2 flex items-center">
+                <div className="flex items-center gap-1">
                     <button
                       onClick={() => setProjectTypeFilter(null)}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                        projectTypeFilter === null
-                          ? 'bg-gray-800 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass(null, projectTypeFilter === null)}`}
                     >
-                      All
+                      All ({projectFilterCounts.all})
                     </button>
                     <button
                       onClick={() => setProjectTypeFilter('ProServe')}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                        projectTypeFilter === 'ProServe'
-                          ? 'bg-purple-600 text-white'
-                          : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                      }`}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('ProServe', projectTypeFilter === 'ProServe')}`}
                     >
-                      ProServe
+                      ProServe ({projectFilterCounts.proServe})
                     </button>
                     <button
                       onClick={() => setProjectTypeFilter('EE')}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                        projectTypeFilter === 'EE'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                      }`}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('EE', projectTypeFilter === 'EE')}`}
                     >
-                      EE
+                      EE ({projectFilterCounts.ee})
                     </button>
                     <button
                       onClick={() => setProjectTypeFilter('Automation')}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                        projectTypeFilter === 'Automation'
-                          ? 'bg-cyan-600 text-white'
-                          : 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200'
-                      }`}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('Automation', projectTypeFilter === 'Automation')}`}
                     >
-                      Automation
+                      Automation ({projectFilterCounts.automation})
                     </button>
                     <button
                       onClick={() => setProjectTypeFilter('ScaleOptimize')}
-                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                        projectTypeFilter === 'ScaleOptimize'
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                      }`}
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('ScaleOptimize', projectTypeFilter === 'ScaleOptimize')}`}
                     >
-                      Scale&Opt
+                      Scale&Opt ({projectFilterCounts.scaleOptimize})
                     </button>
-            </div>
-            </div>
-                <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                  + Add Project
-                </button>
-            </div>
-            </div>
+                </div>
+                </div>
+              </div>
             <div className="flex-1 overflow-y-scroll p-4 scrollbar-visible" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
-              <div className="grid grid-cols-3 gap-3">
-                {projects
-                  .filter(p => p.status === 'Unassigned')
-                  .filter(p => projectTypeFilter === null || p.type === projectTypeFilter)
-                  .map((project) => (
+              {filteredUnassignedProjects.length === 0 ? (
+                <div className="h-full min-h-[140px] flex items-center justify-center">
+                  <p className="text-slate-400 text-sm italic">
+                    {projectTypeFilter ? `No ${formatProjectType(projectTypeFilter)} projects found` : 'No projects found'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  {filteredUnassignedProjects
+                    .map((project) => {
+                      return (
                   <div
                     key={project.id}
-                    className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all"
+                    className="p-3 bg-slate-100 border border-slate-200 rounded-lg shadow-sm hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
                   >
                     <div className="mb-2">
                       <h3 className="font-medium text-gray-900 text-sm line-clamp-2">{project.title}</h3>
@@ -1960,8 +2259,8 @@ const App: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getTypeColor(project.type)}`}>
-                            {project.type}
+                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getProjectTypeBadgeClass(project.type)}`}>
+                            {formatProjectType(project.type)}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
@@ -1975,7 +2274,7 @@ const App: React.FC = () => {
                             setSelectedProject(project.id);
                             setIsProjectDetailsModalOpen(true);
                           }}
-                          className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                        className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                         >
                           Details
                         </button>
@@ -1985,100 +2284,98 @@ const App: React.FC = () => {
                             setEditProjectForm({ ...project });
                             setIsProjectEditModalOpen(true);
                           }}
-                          className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                         >
                           Edit
                         </button>
                       </div>
                     </div>
-                    <button className="mt-2 w-1/2 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors">
+                    <button
+                      onClick={() => openFindBestMatchForProject(project.id)}
+                      className="mt-2 w-1/2 py-1.5 bg-white border border-[#1A535C] text-[#1A535C] text-xs font-medium rounded-lg hover:bg-[#E6F2F4] transition-colors"
+                    >
                       Find Best Match
                     </button>
-            </div>
-                ))}
-            </div>
+                </div>
+                      );
+                    }
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
           {/* Team Overview */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col min-h-0">
-            <div className="p-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-gray-900">Team Overview</h2>
-                <button
-                  onClick={() => setIsTeamOverviewPopupOpen(true)}
-                  className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                  title="Open in popup"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-4.5 0L18 6m0 0h-4.5m4.5 0v4.5" />
-                  </svg>
-                </button>
-                <div className="flex items-center gap-1 ml-2">
+          <div className="bg-white rounded-xl shadow-md border border-slate-200/60 flex-1 flex flex-col min-h-0">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+              <div className="w-full">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-gray-900">Team Overview</h2>
+                    <button
+                      onClick={() => setIsTeamOverviewPopupOpen(true)}
+                      className="text-[10px] text-[#1A535C] hover:text-[#143F47] cursor-pointer transition-colors"
+                    >
+                      View All
+                    </button>
+                  </div>
+                  <button className="text-sm text-[#1A535C] hover:text-[#143F47] font-medium">
+                    + Add Consultant
+                  </button>
+                </div>
+                <div className="mt-2 flex items-center">
+                  <div className="flex items-center gap-1">
                   <button
                     onClick={() => setTeamTypeFilter(null)}
-                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                      teamTypeFilter === null
-                        ? 'bg-gray-800 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === null)}`}
                   >
-                    All
+                    All ({teamFilterCounts.all})
                   </button>
                   <button
                     onClick={() => setTeamTypeFilter('ProServe')}
-                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                      teamTypeFilter === 'ProServe'
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                    }`}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'ProServe')}`}
                   >
-                    ProServe
+                    ProServe ({teamFilterCounts.proServe})
                   </button>
                   <button
                     onClick={() => setTeamTypeFilter('EE')}
-                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                      teamTypeFilter === 'EE'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                    }`}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'EE')}`}
                   >
-                    EE
+                    EE ({teamFilterCounts.ee})
                   </button>
                   <button
                     onClick={() => setTeamTypeFilter('Automation')}
-                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                      teamTypeFilter === 'Automation'
-                        ? 'bg-cyan-600 text-white'
-                        : 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200'
-                    }`}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'Automation')}`}
                   >
-                    Automation
+                    Automation ({teamFilterCounts.automation})
                   </button>
                   <button
                     onClick={() => setTeamTypeFilter('ScaleOptimize')}
-                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                      teamTypeFilter === 'ScaleOptimize'
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                    }`}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'ScaleOptimize')}`}
                   >
-                    Scale&Opt
+                    Scale&Opt ({teamFilterCounts.scaleOptimize})
                   </button>
+                  </div>
                 </div>
               </div>
-              <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                + Add Consultant
-              </button>
             </div>
             <div className="flex-1 overflow-y-scroll p-3 scrollbar-visible" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
-              <div className="grid grid-cols-3 gap-3">
-                {consultants
-                  .filter(c => teamTypeFilter === null || projects.some(p => p.assignedTo === c.name && p.type === teamTypeFilter))
-                  .map((consultant) => (
+              {filteredTeamConsultants.length === 0 ? (
+                <div className="h-full min-h-[140px] flex items-center justify-center">
+                  <p className="text-slate-400 text-sm italic">
+                    {teamTypeFilter
+                      ? `No consultants assigned to ${formatProjectType(teamTypeFilter)} projects`
+                      : 'No consultants found'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  {filteredTeamConsultants.map((consultant) => {
+                    const availabilityIndicator = getConsultantAvailabilityIndicator(consultant);
+                    return (
                   <div
                     key={consultant.id}
-                    className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all"
+                    className="p-3 bg-slate-100 border border-slate-200 rounded-lg shadow-sm hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
                   >
                     <div className="flex items-start justify-between mb-1">
                       <div className="min-w-0 flex-1 mr-2">
@@ -2086,12 +2383,16 @@ const App: React.FC = () => {
                         <p className="text-xs text-gray-500 truncate">{consultant.role}</p>
                       </div>
                       {projects.some(p => p.assignedTo === consultant.name && p.type === 'ProServe') && (
-                        <span 
-                          className={`px-1.5 py-0.5 text-xs font-medium rounded-full flex-shrink-0 ${getWspwColor(consultant.wspw)}`}
+                        <button 
+                          onClick={() => {
+                            setSelectedConsultant(consultant.id);
+                            setIsUtilizationCalendarOpen(true);
+                          }}
+                          className={`px-1.5 py-0.5 text-xs font-medium rounded-full flex-shrink-0 cursor-pointer hover:scale-105 hover:shadow-md transition-all ${getWspwColor(consultant.wspw)}`}
                           title="Working Sessions per Week"
                         >
                           WSPW: {consultant.wspw}
-                        </span>
+                        </button>
                       )}
                     </div>
                     
@@ -2105,7 +2406,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-2.5 h-2.5 rounded-sm ${
-                                  level <= consultant.skills.cspm ? 'bg-blue-500' : 'bg-gray-200'
+                                  level <= consultant.skills.cspm ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2118,7 +2419,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-2.5 h-2.5 rounded-sm ${
-                                  level <= consultant.skills.cwp ? 'bg-green-500' : 'bg-gray-200'
+                                  level <= consultant.skills.cwp ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2131,7 +2432,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-2.5 h-2.5 rounded-sm ${
-                                  level <= consultant.skills.cas ? 'bg-purple-500' : 'bg-gray-200'
+                                  level <= consultant.skills.cas ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2144,7 +2445,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-2.5 h-2.5 rounded-sm ${
-                                  level <= consultant.skills.aut ? 'bg-cyan-500' : 'bg-gray-200'
+                                  level <= consultant.skills.aut ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2157,9 +2458,18 @@ const App: React.FC = () => {
                       setSelectedConsultant(consultant.id);
                             setIsDetailsModalOpen(true);
                           }}
-                          className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                         >
                           Details
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedConsultant(consultant.id);
+                            setIsUtilizationCalendarOpen(true);
+                          }}
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
+                        >
+                          Schedule
                         </button>
                         <button
                           onClick={() => {
@@ -2167,7 +2477,7 @@ const App: React.FC = () => {
                             setEditForm({ ...consultant });
                             setIsEditModalOpen(true);
                           }}
-                          className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                         >
                           Edit
                         </button>
@@ -2177,9 +2487,14 @@ const App: React.FC = () => {
                     <div className="text-xs text-gray-500">
                       {consultant.currentProjects} active project{consultant.currentProjects !== 1 ? 's' : ''}
                     </div>
+                    <div className={`text-[10px] mt-0.5 ${availabilityIndicator.className}`}>
+                      {availabilityIndicator.text}
+                    </div>
                   </div>
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2188,18 +2503,51 @@ const App: React.FC = () => {
       {/* Consultant Details Modal */}
       <Modal
         isOpen={isDetailsModalOpen}
-        onClose={() => setIsDetailsModalOpen(false)}
+        onClose={closeDetailsModal}
         title={consultants.find(c => c.id === selectedConsultant)?.name || 'Consultant Details'}
         maxWidth="max-w-2xl"
+        zIndexClass={isCapacityForecastOpen ? 'z-[60]' : 'z-50'}
       >
         {(() => {
           const consultant = consultants.find(c => c.id === selectedConsultant);
           if (!consultant) return null;
+          
+          // Calculate dynamic utilization based on current week's booked slots
+          const week0Key = `${consultant.id}_week0`;
+          const week0Slots = calendarSlots[week0Key] || [];
+          const currentWeekWspw = week0Slots.filter(s => s === 'booked').length || consultant.wspw;
+          const currentWeekUtilization = week0Slots.length > 0 
+            ? Math.round((currentWeekWspw / 10) * 100)
+            : consultant.utilization;
+          const consultantForecast = getConsultantForecast(consultant, projects, PROSERVE_PROJECT_DETAILS);
+          const projectedUtilizationWeek4 =
+            consultantForecast.weeklyUtilization[3] ?? consultantForecast.weeklyUtilization[0] ?? consultant.utilization;
+          const completingSoon = consultantForecast.completingProjects.filter((project) => project.weeksUntilCompletion <= 4);
+          const completingWithin12 = consultantForecast.completingProjects.filter((project) => project.weeksUntilCompletion <= 12);
+          const projectedUtilizationClassName =
+            projectedUtilizationWeek4 >= 80 ? 'text-[#943838]' : projectedUtilizationWeek4 >= 50 ? 'text-[#8B6E28]' : 'text-[#2D7A56]';
+
+          let forecastStatement: string;
+          if (currentWeekUtilization < 70) {
+            forecastStatement = `Available for new projects: Currently at ${currentWeekUtilization}% utilization with capacity for additional work.`;
+          } else if (completingSoon.length >= 2) {
+            const [firstProject, secondProject] = completingSoon;
+            forecastStatement = `Multiple projects completing soon: ${firstProject.title} (~${firstProject.weeksUntilCompletion} weeks), ${secondProject.title} (~${secondProject.weeksUntilCompletion} weeks).`;
+          } else if (completingSoon.length === 1) {
+            const [projectCompleting] = completingSoon;
+            forecastStatement = `Capacity opening: ${projectCompleting.title} completes in ~${projectCompleting.weeksUntilCompletion} weeks, freeing ${projectCompleting.sessionsPerWeek} sessions/week.`;
+          } else if (completingWithin12.length > 0) {
+            const [projectCompleting] = completingWithin12;
+            forecastStatement = `Capacity opening: ${projectCompleting.title} completes in ~${projectCompleting.weeksUntilCompletion} weeks, freeing ${projectCompleting.sessionsPerWeek} sessions/week.`;
+          } else {
+            forecastStatement = 'Steady workload: No projects projected to complete in the next 12 weeks.';
+          }
+          
           return (
             <div className="space-y-6">
               {/* Basic Info */}
               <div className="flex items-start gap-4">
-                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
+                <div className="w-16 h-16 bg-gradient-to-br from-[#1A535C] to-[#143F47] rounded-full flex items-center justify-center text-white text-2xl font-bold">
                   {consultant.name.split(' ').map(n => n[0]).join('')}
                 </div>
                 <div className="flex-1">
@@ -2208,14 +2556,11 @@ const App: React.FC = () => {
                   <div className="mt-2 flex items-center gap-2">
                     <button 
                       onClick={() => {
-                        const hasProServeProjects = projects.some(p => p.assignedTo === consultant.name && p.type === 'ProServe');
-                        if (hasProServeProjects) {
-                          setIsUtilizationCalendarOpen(true);
-                        }
+                        setIsUtilizationCalendarOpen(true);
                       }}
-                      className={`px-2 py-0.5 text-xs font-medium rounded-full transition-all cursor-pointer hover:scale-105 hover:shadow-md hover:brightness-95 ${getUtilizationColor(consultant.utilization)}`}
+                      className={`px-2 py-0.5 text-xs font-medium rounded-full transition-all cursor-pointer hover:scale-105 hover:shadow-md hover:brightness-95 ${getUtilizationColor(currentWeekUtilization)}`}
                     >
-                      {consultant.utilization}% Utilization
+                      {currentWeekUtilization}% Utilization
                     </button>
                     <button 
                       onClick={() => {
@@ -2224,13 +2569,13 @@ const App: React.FC = () => {
                           setIsConsultantProjectsModalOpen(true);
                         }
                       }}
-                      className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-700 transition-all cursor-pointer hover:scale-105 hover:shadow-md hover:bg-green-200"
+                      className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-100 text-slate-700 border border-slate-200 transition-all cursor-pointer hover:scale-105 hover:shadow-md hover:bg-slate-200"
                     >
                       {projects.filter(p => p.assignedTo === consultant.name && p.type === 'ProServe').length} Project{projects.filter(p => p.assignedTo === consultant.name && p.type === 'ProServe').length !== 1 ? 's' : ''}
                     </button>
                     <button 
                       onClick={() => setIsSkillsModalOpen(true)}
-                      className="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-700 transition-all cursor-pointer hover:scale-105 hover:shadow-md hover:bg-purple-200"
+                      className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-100 text-slate-700 border border-slate-200 transition-all cursor-pointer hover:scale-105 hover:shadow-md hover:bg-slate-200"
                     >
                       {Math.round((consultant.skills.cspm + consultant.skills.cwp + consultant.skills.cas + consultant.skills.aut) / 4 * 20)}% Avg Skill
                     </button>
@@ -2242,51 +2587,138 @@ const App: React.FC = () => {
               <div className="bg-gray-50 rounded-lg p-4">
                 <h4 className="font-semibold text-gray-900 mb-4">Skills & Expertise</h4>
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">CSPM (Cloud Security Posture Management)</span>
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map((level) => (
-                        <div
-                          key={level}
-                          className={`w-6 h-6 rounded ${level <= consultant.skills.cspm ? 'bg-blue-500' : 'bg-gray-200'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">CWP (Cloud Workload Protection)</span>
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map((level) => (
-                        <div
-                          key={level}
-                          className={`w-6 h-6 rounded ${level <= consultant.skills.cwp ? 'bg-green-500' : 'bg-gray-200'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">CAS (Cloud Application Security)</span>
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map((level) => (
-                        <div
-                          key={level}
-                          className={`w-6 h-6 rounded ${level <= consultant.skills.cas ? 'bg-purple-500' : 'bg-gray-200'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">AUT (Automation)</span>
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map((level) => (
-                        <div
-                          key={level}
-                          className={`w-6 h-6 rounded ${level <= consultant.skills.aut ? 'bg-cyan-500' : 'bg-gray-200'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
+                  {(() => {
+                    const hasProServeSkills = Object.prototype.hasOwnProperty.call(CONSULTANT_SKILLS, consultant.id);
+                    const hasNonProServeSkills = Object.prototype.hasOwnProperty.call(NON_PROSERVE_SKILLS, consultant.id);
+                    const isAssignedToProServe = projects.some(
+                      (project) => project.assignedTo === consultant.name && project.type === 'ProServe'
+                    );
+
+                    // Some consultants can exist in both datasets; prefer the data that matches their engagement type.
+                    const shouldUseProServeSkills = hasProServeSkills && (isAssignedToProServe || !hasNonProServeSkills);
+                    const shouldUseNonProServeSkills = !shouldUseProServeSkills && hasNonProServeSkills;
+
+                    const proServeSkillData = shouldUseProServeSkills ? CONSULTANT_SKILLS[consultant.id] : undefined;
+                    const nonProServeSkillData = shouldUseNonProServeSkills ? NON_PROSERVE_SKILLS[consultant.id] : undefined;
+                    const hasExpandableSkills = Boolean(proServeSkillData || nonProServeSkillData);
+                    const activeSubSkillGroups = proServeSkillData
+                      ? PROSERVE_SUB_SKILL_GROUPS
+                      : nonProServeSkillData
+                        ? NON_PROSERVE_SUB_SKILL_GROUPS
+                        : null;
+                    const subSkillRatings = (proServeSkillData || nonProServeSkillData) as Record<string, unknown> | undefined;
+                    const subSkillScale = proServeSkillData ? 5 : 4;
+
+                    const renderRatingBlocks = (level: number, scale: number, activeColorClass: string, blockSizeClass: string) => (
+                      <div className="flex gap-1">
+                        {Array.from({ length: scale }, (_, index) => index + 1).map((ratingLevel) => (
+                          <div
+                            key={ratingLevel}
+                            className={`${blockSizeClass} rounded ${ratingLevel <= level ? activeColorClass : 'bg-slate-200'}`}
+                          />
+                        ))}
+                      </div>
+                    );
+
+                    const skillRows: Array<{
+                      key: SkillGroupKey;
+                      label: string;
+                      value: number;
+                      colorClass: string;
+                    }> = [
+                      {
+                        key: 'cspm',
+                        label: 'CSPM (Cloud Security Posture Management)',
+                        value: consultant.skills.cspm,
+                        colorClass: 'bg-[#1A535C]',
+                      },
+                      {
+                        key: 'cwp',
+                        label: 'CWP (Cloud Workload Protection)',
+                        value: consultant.skills.cwp,
+                        colorClass: 'bg-[#1A535C]',
+                      },
+                      {
+                        key: 'cas',
+                        label: 'CAS (Cloud Application Security)',
+                        value: consultant.skills.cas,
+                        colorClass: 'bg-[#1A535C]',
+                      },
+                      {
+                        key: 'aut',
+                        label: 'AUT (Automation)',
+                        value: consultant.skills.aut,
+                        colorClass: 'bg-[#1A535C]',
+                      },
+                    ];
+
+                    return skillRows.map((skill) => {
+                      const isExpanded = expandedSkillGroup === skill.key;
+                      const skillSubSkills = activeSubSkillGroups?.[skill.key] ?? [];
+
+                      return (
+                        <div key={skill.key} className="space-y-2">
+                          {hasExpandableSkills ? (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedSkillGroup(isExpanded ? null : skill.key)}
+                              className="w-full flex items-center justify-between text-left"
+                            >
+                              <span className="text-sm font-medium text-gray-700">{skill.label}</span>
+                              <div className="flex items-center gap-2">
+                                {renderRatingBlocks(skill.value, 5, skill.colorClass, 'w-6 h-6')}
+                                <span className="text-sm text-gray-500 w-4 text-center">{isExpanded ? '▼' : '▶'}</span>
+                              </div>
+                            </button>
+                          ) : (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-gray-700">{skill.label}</span>
+                              {renderRatingBlocks(skill.value, 5, skill.colorClass, 'w-6 h-6')}
+                            </div>
+                          )}
+
+                          {hasExpandableSkills && isExpanded && skillSubSkills.length > 0 && (
+                            <div className="ml-4 pl-3 border-l-2 border-gray-200 space-y-2">
+                              {skillSubSkills.map((subSkill) => {
+                                const subSkillLevel = Number(subSkillRatings?.[subSkill.key] ?? 0);
+                                return (
+                                  <div key={subSkill.key} className="flex items-center justify-between gap-3">
+                                    <span className="text-xs text-gray-600">{subSkill.label}</span>
+                                    {renderRatingBlocks(subSkillLevel, subSkillScale, skill.colorClass, 'w-4 h-4')}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
+              </div>
+
+              {/* Capacity Outlook */}
+              <div className="bg-slate-50 rounded-lg p-4">
+                <h4 className="font-semibold text-gray-900 mb-3">Capacity Outlook</h4>
+                <div className="space-y-2 text-sm text-gray-700">
+                  <p>
+                    Current load: {currentWeekWspw} WSPW ({currentWeekUtilization}%)
+                  </p>
+                  <p>
+                    Active projects: {consultantForecast.activeProjectCount} ({consultantForecast.proServeProjectCount} ProServe, {consultantForecast.otherProjectCount} other)
+                  </p>
+                  <p>{forecastStatement}</p>
+                  <p>
+                    Projected utilization in 4 weeks:{' '}
+                    <span className={`font-medium ${projectedUtilizationClassName}`}>{projectedUtilizationWeek4}%</span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsCapacityForecastOpen(true)}
+                  className="mt-3 text-[#1A535C] text-sm hover:underline transition-colors"
+                >
+                  View Full Forecast
+                </button>
               </div>
 
               {/* Assigned Projects */}
@@ -2299,18 +2731,14 @@ const App: React.FC = () => {
                         <div className="flex-1">
                           <p className="text-sm font-medium text-gray-900">{project.title}</p>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getTypeColor(project.type)}`}>
-                              {project.type}
+                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getProjectTypeBadgeClass(project.type)}`}>
+                              {formatProjectType(project.type)}
                             </span>
                             <span className="text-xs text-gray-500">{project.hours}h</span>
                           </div>
                         </div>
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          project.status === 'InProgress' 
-                            ? 'bg-blue-100 text-blue-700' 
-                            : 'bg-orange-100 text-orange-700'
-                        }`}>
-                          {project.status === 'InProgress' ? 'In Progress' : 'On Hold'}
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(project.status)}`}>
+                          {formatStatus(project.status)}
                         </span>
                       </div>
                     ))
@@ -2324,16 +2752,22 @@ const App: React.FC = () => {
               <div className="flex gap-3 pt-4 border-t border-gray-200">
                 <button
                   onClick={() => {
-                    setIsDetailsModalOpen(false);
+                    closeDetailsModal();
                     setEditForm({ ...consultant });
                     setIsEditModalOpen(true);
                   }}
-                  className="flex-1 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  className="flex-1 py-2 bg-[#1A535C] text-white font-medium rounded-lg hover:bg-[#143F47] transition-colors"
                 >
                   Edit Consultant
                 </button>
                 <button
-                  onClick={() => setIsDetailsModalOpen(false)}
+                  onClick={() => setIsUtilizationCalendarOpen(true)}
+                  className="flex-1 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  View Weekly Schedule
+                </button>
+                <button
+                  onClick={closeDetailsModal}
                   className="flex-1 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
                 >
                   Close
@@ -2363,7 +2797,7 @@ const App: React.FC = () => {
                 type="text"
                 value={editForm.name}
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               />
                       </div>
 
@@ -2373,7 +2807,7 @@ const App: React.FC = () => {
               <select
                 value={editForm.role}
                 onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               >
                 <option value="Associate">Associate</option>
                 <option value="Consultant">Consultant</option>
@@ -2406,7 +2840,7 @@ const App: React.FC = () => {
                 max="10"
                 value={editForm.currentProjects}
                 onChange={(e) => setEditForm({ ...editForm, currentProjects: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               />
             </div>
 
@@ -2423,7 +2857,7 @@ const App: React.FC = () => {
                       onClick={() => setEditForm({ ...editForm, skills: { ...editForm.skills, cspm: level } })}
                       className={`w-10 h-10 rounded-lg font-medium transition-colors ${
                         level <= editForm.skills.cspm
-                          ? 'bg-blue-500 text-white'
+                          ? 'bg-[#1A535C] text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
@@ -2442,7 +2876,7 @@ const App: React.FC = () => {
                       onClick={() => setEditForm({ ...editForm, skills: { ...editForm.skills, cwp: level } })}
                       className={`w-10 h-10 rounded-lg font-medium transition-colors ${
                         level <= editForm.skills.cwp
-                          ? 'bg-green-500 text-white'
+                          ? 'bg-[#1A535C] text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
@@ -2461,7 +2895,7 @@ const App: React.FC = () => {
                       onClick={() => setEditForm({ ...editForm, skills: { ...editForm.skills, cas: level } })}
                       className={`w-10 h-10 rounded-lg font-medium transition-colors ${
                         level <= editForm.skills.cas
-                          ? 'bg-purple-500 text-white'
+                          ? 'bg-[#1A535C] text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
@@ -2480,7 +2914,7 @@ const App: React.FC = () => {
                       onClick={() => setEditForm({ ...editForm, skills: { ...editForm.skills, aut: level } })}
                       className={`w-10 h-10 rounded-lg font-medium transition-colors ${
                         level <= editForm.skills.aut
-                          ? 'bg-cyan-500 text-white'
+                          ? 'bg-[#1A535C] text-white'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
@@ -2499,7 +2933,7 @@ const App: React.FC = () => {
                   setIsEditModalOpen(false);
                   setEditForm(null);
                 }}
-                className="flex-1 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex-1 py-2 bg-[#1A535C] text-white font-medium rounded-lg hover:bg-[#143F47] transition-colors"
               >
                 Save Changes
               </button>
@@ -2533,71 +2967,61 @@ const App: React.FC = () => {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setProjectTypeFilter(null)}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    projectTypeFilter === null
-                      ? 'bg-gray-800 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass(null, projectTypeFilter === null)}`}
                 >
-                  All
+                  All ({projectFilterCounts.all})
                 </button>
                 <button
                   onClick={() => setProjectTypeFilter('ProServe')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    projectTypeFilter === 'ProServe'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('ProServe', projectTypeFilter === 'ProServe')}`}
                 >
-                  ProServe
+                  ProServe ({projectFilterCounts.proServe})
                 </button>
                 <button
                   onClick={() => setProjectTypeFilter('EE')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    projectTypeFilter === 'EE'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('EE', projectTypeFilter === 'EE')}`}
                 >
-                  EE
+                  EE ({projectFilterCounts.ee})
                 </button>
                 <button
                   onClick={() => setProjectTypeFilter('Automation')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    projectTypeFilter === 'Automation'
-                      ? 'bg-cyan-600 text-white'
-                      : 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('Automation', projectTypeFilter === 'Automation')}`}
                 >
-                  Automation
+                  Automation ({projectFilterCounts.automation})
                 </button>
                 <button
                   onClick={() => setProjectTypeFilter('ScaleOptimize')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    projectTypeFilter === 'ScaleOptimize'
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getProjectFilterChipClass('ScaleOptimize', projectTypeFilter === 'ScaleOptimize')}`}
                 >
-                  Scale&Opt
+                  Scale&Opt ({projectFilterCounts.scaleOptimize})
                 </button>
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4 max-h-[60vh] overflow-y-auto scrollbar-visible pr-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
-            {projects.filter(p => p.status === 'Unassigned').filter(p => projectTypeFilter === null || p.type === projectTypeFilter).map((project) => (
+          {projects.filter(p => p.status === 'Unassigned').filter(p => projectTypeFilter === null || p.type === projectTypeFilter).length === 0 ? (
+            <div className="h-[40vh] flex items-center justify-center">
+              <p className="text-slate-400 text-sm italic">
+                {projectTypeFilter ? `No ${formatProjectType(projectTypeFilter)} projects found` : 'No projects found'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-4 max-h-[60vh] overflow-y-auto scrollbar-visible pr-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
+              {projects.filter(p => p.status === 'Unassigned').filter(p => projectTypeFilter === null || p.type === projectTypeFilter).map((project) => {
+                const projectPhaseDetails = project.type === 'ProServe' ? PROSERVE_PROJECT_DETAILS[project.id] : undefined;
+                return (
               <div
                 key={project.id}
-                className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all"
+                className="p-3 bg-slate-100 border border-slate-200 rounded-lg shadow-sm hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
               >
                 <div className="mb-2">
                   <h3 className="font-medium text-gray-900 text-sm line-clamp-2">{project.title}</h3>
+                  {projectPhaseDetails && renderProServePhaseIndicator(projectPhaseDetails)}
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getTypeColor(project.type)}`}>
-                        {project.type}
+                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getProjectTypeBadgeClass(project.type)}`}>
+                        {formatProjectType(project.type)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
@@ -2612,7 +3036,7 @@ const App: React.FC = () => {
                         setIsProjectQueuePopupOpen(false);
                         setIsProjectDetailsModalOpen(true);
                       }}
-                      className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                      className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                     >
                       Details
                     </button>
@@ -2623,19 +3047,50 @@ const App: React.FC = () => {
                         setIsProjectQueuePopupOpen(false);
                         setIsProjectEditModalOpen(true);
                       }}
-                      className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                      className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                     >
                       Edit
                     </button>
                   </div>
                 </div>
-                <button className="mt-2 w-1/2 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors">
+                <button
+                  onClick={() => openFindBestMatchForProject(project.id)}
+                  className="mt-2 w-1/2 py-1.5 bg-white border border-[#1A535C] text-[#1A535C] text-xs font-medium rounded-lg hover:bg-[#E6F2F4] transition-colors"
+                >
                   Find Best Match
                 </button>
               </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={isFindBestMatchOpen && Boolean(activeMatchProject)}
+        onClose={() => {
+          setIsFindBestMatchOpen(false);
+          setMatchTargetProject(null);
+          setMatchResults([]);
+        }}
+        title="Find Best Match"
+        maxWidth="max-w-5xl"
+        zIndexClass={isProjectQueuePopupOpen ? 'z-[60]' : 'z-50'}
+      >
+        {activeMatchProject && (
+          <FindBestMatch
+            project={activeMatchProject}
+            matchResults={matchResults}
+            onClose={() => {
+              setIsFindBestMatchOpen(false);
+              setMatchTargetProject(null);
+              setMatchResults([]);
+            }}
+            onAssign={handleAssignBestMatch}
+            proServeDetails={PROSERVE_PROJECT_DETAILS}
+          />
+        )}
       </Modal>
 
       {/* Team Overview Popup Modal */}
@@ -2649,70 +3104,72 @@ const App: React.FC = () => {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <span className="text-sm text-gray-500">
-                {consultants.filter(c => teamTypeFilter === null || projects.some(p => p.assignedTo === c.name && p.type === teamTypeFilter)).length} Consultants • Avg Utilization: {Math.round(consultants.filter(c => teamTypeFilter === null || projects.some(p => p.assignedTo === c.name && p.type === teamTypeFilter)).reduce((sum, c) => sum + c.utilization, 0) / (consultants.filter(c => teamTypeFilter === null || projects.some(p => p.assignedTo === c.name && p.type === teamTypeFilter)).length || 1))}%
+                {filteredTeamConsultants.length} Consultants • Avg Utilization: {Math.round(filteredTeamConsultants.reduce((sum, c) => sum + c.utilization, 0) / (filteredTeamConsultants.length || 1))}%
               </span>
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setTeamTypeFilter(null)}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    teamTypeFilter === null
-                      ? 'bg-gray-800 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === null)}`}
                 >
-                  All
+                  All ({teamFilterCounts.all})
                 </button>
                 <button
                   onClick={() => setTeamTypeFilter('ProServe')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    teamTypeFilter === 'ProServe'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'ProServe')}`}
                 >
-                  ProServe
+                  ProServe ({teamFilterCounts.proServe})
                 </button>
                 <button
                   onClick={() => setTeamTypeFilter('EE')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    teamTypeFilter === 'EE'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'EE')}`}
                 >
-                  EE
+                  EE ({teamFilterCounts.ee})
                 </button>
                 <button
                   onClick={() => setTeamTypeFilter('Automation')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    teamTypeFilter === 'Automation'
-                      ? 'bg-cyan-600 text-white'
-                      : 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'Automation')}`}
                 >
-                  Automation
+                  Automation ({teamFilterCounts.automation})
                 </button>
                 <button
                   onClick={() => setTeamTypeFilter('ScaleOptimize')}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${
-                    teamTypeFilter === 'ScaleOptimize'
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                  }`}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-full transition-colors ${getTeamFilterChipClass(teamTypeFilter === 'ScaleOptimize')}`}
                 >
-                  Scale&Opt
+                  Scale&Opt ({teamFilterCounts.scaleOptimize})
                 </button>
               </div>
             </div>
-            <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-              + Add Consultant
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setIsTeamOverviewPopupOpen(false);
+                  setIsCapacityForecastOpen(true);
+                }}
+                className="px-3 py-1.5 text-xs font-medium rounded-full bg-[#E6F2F4] text-[#1A535C] hover:bg-[#D1E8EC] transition-colors"
+              >
+                Capacity Forecast
+              </button>
+              <button className="text-sm text-[#1A535C] hover:text-[#143F47] font-medium">
+                + Add Consultant
+              </button>
+            </div>
           </div>
-          <div className="grid grid-cols-4 gap-4 max-h-[60vh] overflow-y-auto scrollbar-visible pr-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
-            {consultants.filter(c => teamTypeFilter === null || projects.some(p => p.assignedTo === c.name && p.type === teamTypeFilter)).map((consultant) => (
+          {filteredTeamConsultants.length === 0 ? (
+            <div className="h-[40vh] flex items-center justify-center">
+              <p className="text-slate-400 text-sm italic">
+                {teamTypeFilter
+                  ? `No consultants assigned to ${formatProjectType(teamTypeFilter)} projects`
+                  : 'No consultants found'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-4 max-h-[60vh] overflow-y-auto scrollbar-visible pr-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
+              {filteredTeamConsultants.map((consultant) => {
+                const availabilityIndicator = getConsultantAvailabilityIndicator(consultant);
+                return (
               <div
                 key={consultant.id}
-                className="p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all"
+                className="p-4 bg-slate-100 border border-slate-200 rounded-lg shadow-sm hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
               >
                 <div className="flex items-start justify-between mb-2">
                   <div className="min-w-0 flex-1 mr-2">
@@ -2720,12 +3177,16 @@ const App: React.FC = () => {
                     <p className="text-xs text-gray-500 truncate">{consultant.role}</p>
                   </div>
                   {projects.some(p => p.assignedTo === consultant.name && p.type === 'ProServe') && (
-                    <span 
-                      className={`px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ${getWspwColor(consultant.wspw)}`}
+                    <button 
+                      onClick={() => {
+                        setSelectedConsultant(consultant.id);
+                        setIsUtilizationCalendarOpen(true);
+                      }}
+                      className={`px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 cursor-pointer hover:scale-105 hover:shadow-md transition-all ${getWspwColor(consultant.wspw)}`}
                       title="Working Sessions per Week"
                     >
                       WSPW: {consultant.wspw}
-                    </span>
+                    </button>
                   )}
                 </div>
                     
@@ -2739,7 +3200,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-3 h-3 rounded-sm ${
-                                  level <= consultant.skills.cspm ? 'bg-blue-500' : 'bg-gray-200'
+                                  level <= consultant.skills.cspm ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2752,7 +3213,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-3 h-3 rounded-sm ${
-                                  level <= consultant.skills.cwp ? 'bg-green-500' : 'bg-gray-200'
+                                  level <= consultant.skills.cwp ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2765,7 +3226,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-3 h-3 rounded-sm ${
-                                  level <= consultant.skills.cas ? 'bg-purple-500' : 'bg-gray-200'
+                                  level <= consultant.skills.cas ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2778,7 +3239,7 @@ const App: React.FC = () => {
                               <div
                                 key={level}
                                 className={`w-3 h-3 rounded-sm ${
-                                  level <= consultant.skills.aut ? 'bg-cyan-500' : 'bg-gray-200'
+                                  level <= consultant.skills.aut ? 'bg-[#1A535C]' : 'bg-slate-200'
                                 }`}
                               />
                             ))}
@@ -2792,9 +3253,18 @@ const App: React.FC = () => {
                             setIsTeamOverviewPopupOpen(false);
                             setIsDetailsModalOpen(true);
                           }}
-                          className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                         >
                           Details
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedConsultant(consultant.id);
+                            setIsUtilizationCalendarOpen(true);
+                          }}
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
+                        >
+                          Schedule
                         </button>
                         <button
                           onClick={() => {
@@ -2803,7 +3273,7 @@ const App: React.FC = () => {
                             setIsTeamOverviewPopupOpen(false);
                             setIsEditModalOpen(true);
                           }}
-                          className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                          className="text-[10px] text-[#1A535C] hover:text-[#143F47] hover:underline transition-colors"
                         >
                           Edit
                         </button>
@@ -2813,10 +3283,34 @@ const App: React.FC = () => {
                 <div className="text-xs text-gray-500">
                   {consultant.currentProjects} active project{consultant.currentProjects !== 1 ? 's' : ''}
                 </div>
+                <div className={`text-[10px] mt-0.5 ${availabilityIndicator.className}`}>
+                  {availabilityIndicator.text}
+                </div>
               </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={isCapacityForecastOpen}
+        onClose={() => setIsCapacityForecastOpen(false)}
+        title="Capacity Forecast"
+        maxWidth="max-w-[95vw]"
+        zIndexClass="z-[55]"
+      >
+        <CapacityForecast
+          consultants={consultants}
+          projects={projects}
+          proServeDetails={PROSERVE_PROJECT_DETAILS}
+          onClose={() => setIsCapacityForecastOpen(false)}
+          onSelectConsultant={(consultantId) => {
+            setSelectedConsultant(consultantId);
+            setIsDetailsModalOpen(true);
+          }}
+        />
       </Modal>
 
       {/* Project Details Modal */}
@@ -2829,25 +3323,33 @@ const App: React.FC = () => {
         {(() => {
           const project = projects.find(p => p.id === selectedProject);
           if (!project) return null;
+          const projectPhaseDetails = project.type === 'ProServe' ? PROSERVE_PROJECT_DETAILS[project.id] : undefined;
           return (
             <div className="space-y-6">
               {/* Project Info */}
               <div className="flex items-start gap-4">
-                <div className={`w-16 h-16 rounded-lg flex items-center justify-center ${getTypeColor(project.type)}`}>
+                <div className={`w-16 h-16 rounded-lg flex items-center justify-center ${getProjectTypeBadgeClass(project.type)}`}>
                   <span className="text-2xl font-bold">{project.type.charAt(0)}</span>
           </div>
                 <div className="flex-1">
                   <h3 className="text-xl font-semibold text-gray-900">{project.title}</h3>
                   <div className="mt-2 flex items-center gap-3">
-                    <span className={`px-2 py-1 text-sm font-medium rounded-full ${getTypeColor(project.type)}`}>
-                      {project.type}
+                    <span className={`px-2 py-1 text-sm font-medium rounded-full ${getProjectTypeBadgeClass(project.type)}`}>
+                      {formatProjectType(project.type)}
                     </span>
                     <span className={`px-2 py-1 text-sm font-medium rounded-full ${getStatusColor(project.status)}`}>
-                      {project.status}
+                      {formatStatus(project.status)}
                     </span>
         </div>
                 </div>
               </div>
+
+              {projectPhaseDetails && (
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <p className="text-xs font-medium text-gray-700 mb-2">Project Phase</p>
+                  {renderProServePhaseIndicator(projectPhaseDetails)}
+                </div>
+              )}
 
               {/* Project Details */}
               <div className="bg-gray-50 rounded-lg p-4">
@@ -2863,7 +3365,7 @@ const App: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Status</p>
-                    <p className="text-lg font-semibold text-gray-900">{project.status}</p>
+                    <p className="text-lg font-semibold text-gray-900">{formatStatus(project.status)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Assigned To</p>
@@ -2874,16 +3376,16 @@ const App: React.FC = () => {
 
               {/* Quick Stats */}
               <div className="grid grid-cols-3 gap-4">
-                <div className="bg-purple-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-purple-600">{project.hours}h</p>
-                  <p className="text-xs text-purple-700">Total Hours</p>
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center">
+                  <p className="text-2xl font-bold text-[#1A535C]">{project.hours}h</p>
+                  <p className="text-xs text-slate-600">Total Hours</p>
                 </div>
-                <div className="bg-blue-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-blue-600">{project.complexity}</p>
-                  <p className="text-xs text-blue-700">Complexity</p>
+                <div className="bg-[#E6F2F4] rounded-lg p-4 text-center">
+                  <p className="text-2xl font-bold text-[#1A535C]">{project.complexity}</p>
+                  <p className="text-xs text-[#1A535C]">Complexity</p>
                 </div>
                 <div className="bg-orange-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-orange-600">{project.type}</p>
+                  <p className="text-2xl font-bold text-orange-600">{formatProjectType(project.type)}</p>
                   <p className="text-xs text-orange-700">Project Type</p>
                 </div>
               </div>
@@ -2896,7 +3398,7 @@ const App: React.FC = () => {
                     setEditProjectForm({ ...project });
                     setIsProjectEditModalOpen(true);
                   }}
-                  className="flex-1 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  className="flex-1 py-2 bg-[#1A535C] text-white font-medium rounded-lg hover:bg-[#143F47] transition-colors"
                 >
                   Edit Project
                 </button>
@@ -2931,7 +3433,7 @@ const App: React.FC = () => {
                 type="text"
                 value={editProjectForm.title}
                 onChange={(e) => setEditProjectForm({ ...editProjectForm, title: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               />
             </div>
 
@@ -2941,12 +3443,12 @@ const App: React.FC = () => {
               <select
                 value={editProjectForm.type}
                 onChange={(e) => setEditProjectForm({ ...editProjectForm, type: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               >
                 <option value="ProServe">ProServe</option>
                 <option value="EE">EE</option>
                 <option value="Automation">Automation</option>
-                <option value="ScaleOptimize">ScaleOptimize</option>
+                <option value="ScaleOptimize">Scale & Optimize</option>
               </select>
             </div>
 
@@ -2956,7 +3458,7 @@ const App: React.FC = () => {
               <select
                 value={editProjectForm.status}
                 onChange={(e) => setEditProjectForm({ ...editProjectForm, status: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               >
                 <option value="Unassigned">Unassigned</option>
                 <option value="InProgress">In Progress</option>
@@ -2972,7 +3474,7 @@ const App: React.FC = () => {
                 min="1"
                 value={editProjectForm.hours}
                 onChange={(e) => setEditProjectForm({ ...editProjectForm, hours: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               />
             </div>
 
@@ -2982,7 +3484,7 @@ const App: React.FC = () => {
               <select
                 value={editProjectForm.complexity}
                 onChange={(e) => setEditProjectForm({ ...editProjectForm, complexity: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1A535C]"
               >
                 <option value="Low">Low</option>
                 <option value="Medium">Medium</option>
@@ -2998,7 +3500,7 @@ const App: React.FC = () => {
                   setIsProjectEditModalOpen(false);
                   setEditProjectForm(null);
                 }}
-                className="flex-1 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex-1 py-2 bg-[#1A535C] text-white font-medium rounded-lg hover:bg-[#143F47] transition-colors"
               >
                 Save Changes
               </button>
@@ -3028,22 +3530,22 @@ const App: React.FC = () => {
           <div className="grid grid-cols-4 gap-4">
             <div className="bg-gray-50 rounded-lg p-4 text-center">
               <p className="text-sm font-medium text-gray-900 mb-1">CSPM</p>
-              <p className="text-3xl font-bold text-yellow-600">72%</p>
+              <p className="text-3xl font-semibold text-[#8B6E28]">72%</p>
               <p className="text-xs text-gray-500 mt-1">Capacity Used</p>
             </div>
             <div className="bg-gray-50 rounded-lg p-4 text-center">
               <p className="text-sm font-medium text-gray-900 mb-1">CWP</p>
-              <p className="text-3xl font-bold text-yellow-600">65%</p>
+              <p className="text-3xl font-semibold text-[#8B6E28]">65%</p>
               <p className="text-xs text-gray-500 mt-1">Capacity Used</p>
             </div>
             <div className="bg-gray-50 rounded-lg p-4 text-center">
               <p className="text-sm font-medium text-gray-900 mb-1">CAS</p>
-              <p className="text-3xl font-bold text-green-600">58%</p>
+              <p className="text-3xl font-semibold text-[#2D7A56]">58%</p>
               <p className="text-xs text-gray-500 mt-1">Capacity Used</p>
             </div>
             <div className="bg-gray-50 rounded-lg p-4 text-center">
               <p className="text-sm font-medium text-gray-900 mb-1">AUT</p>
-              <p className="text-3xl font-bold text-red-600">81%</p>
+              <p className="text-3xl font-semibold text-[#943838]">81%</p>
               <p className="text-xs text-gray-500 mt-1">Capacity Used</p>
             </div>
           </div>
@@ -3056,7 +3558,7 @@ const App: React.FC = () => {
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-medium text-gray-900">CSPM (Cloud Security Posture Management)</h4>
-                <span className="px-2 py-1 text-sm font-medium rounded-full bg-yellow-100 text-yellow-700">72% Used</span>
+                <span className="px-2 py-1 text-sm font-medium rounded-full bg-amber-50 text-amber-700 border border-amber-200">72% Used</span>
               </div>
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div><span className="text-gray-500">Available:</span> <span className="font-medium">3 consultants</span></div>
@@ -3069,7 +3571,7 @@ const App: React.FC = () => {
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-medium text-gray-900">CWP (Cloud Workload Protection)</h4>
-                <span className="px-2 py-1 text-sm font-medium rounded-full bg-yellow-100 text-yellow-700">65% Used</span>
+                <span className="px-2 py-1 text-sm font-medium rounded-full bg-amber-50 text-amber-700 border border-amber-200">65% Used</span>
               </div>
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div><span className="text-gray-500">Available:</span> <span className="font-medium">4 consultants</span></div>
@@ -3082,7 +3584,7 @@ const App: React.FC = () => {
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-medium text-gray-900">CAS (Cloud Application Security)</h4>
-                <span className="px-2 py-1 text-sm font-medium rounded-full bg-green-100 text-green-700">58% Used</span>
+                <span className="px-2 py-1 text-sm font-medium rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">58% Used</span>
               </div>
               <div className="grid grid-cols-3 gap-3 text-sm">
                 <div><span className="text-gray-500">Available:</span> <span className="font-medium">5 consultants</span></div>
@@ -3144,7 +3646,7 @@ const App: React.FC = () => {
                 {/* Back button */}
                 <button
                   onClick={() => setSelectedProServeProject(null)}
-                  className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                  className="flex items-center gap-1 text-sm text-[#1A535C] hover:text-[#143F47] transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -3156,15 +3658,15 @@ const App: React.FC = () => {
                 <div className="flex items-start justify-between pb-3 border-b border-gray-200">
                   <div>
                     <h3 className="font-semibold text-gray-900 text-lg">{details?.assignedClient || project.title}</h3>
-                    <p className="text-sm text-gray-500 mt-0.5">{project.title}</p>
+                    <p className="text-sm text-gray-500 mt-0.5">{getProjectTitleWithoutClient(project.title, details?.assignedClient)}</p>
                     <div className="flex items-center gap-2 mt-2">
-                      <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-700">
+                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getProjectTypeBadgeClass('ProServe')}`}>
                         ProServe
                       </span>
                       <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                        project.status === 'InProgress' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                        project.status === 'InProgress' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-orange-50 text-orange-700 border border-orange-200'
                       }`}>
-                        {project.status === 'InProgress' ? 'In Progress' : project.status === 'OnHold' ? 'On Hold' : project.status}
+                        {formatStatus(project.status)}
                       </span>
                     </div>
                   </div>
@@ -3176,6 +3678,36 @@ const App: React.FC = () => {
                 
                 {details ? (
                   <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
+                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                      <p className="text-xs font-medium text-gray-700 mb-2">Project Phase</p>
+                      {renderProServePhaseIndicator(details)}
+                    </div>
+                    {(() => {
+                      const usedSessions = Math.max(0, details.totalPurchasedSessions - details.approxRemainingSessions);
+                      const usagePercent = details.totalPurchasedSessions > 0 ? (usedSessions / details.totalPurchasedSessions) * 100 : 0;
+                      const progressBarColorClass =
+                        usagePercent > 90 ? 'bg-red-500' : usagePercent >= 75 ? 'bg-amber-500' : 'bg-[#1A535C]';
+
+                      return (
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium text-gray-900">
+                              Sessions: {usedSessions} of {details.totalPurchasedSessions} used
+                            </p>
+                            <p className="text-xs text-gray-500">{Math.round(usagePercent)}%</p>
+                          </div>
+                          <div className="mt-2 h-2 bg-slate-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${progressBarColorClass}`}
+                              style={{ width: `${Math.min(100, Math.max(0, usagePercent))}%` }}
+                            />
+                          </div>
+                          <div className="mt-1 flex justify-end">
+                            <span className="text-xs text-gray-500">{details.approxRemainingSessions} remaining</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">Clarizen Project ID</span>
                       <span className="text-sm font-medium text-gray-900 font-mono">{details.clarizenProjectId}</span>
@@ -3196,37 +3728,37 @@ const App: React.FC = () => {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">Cortex Cloud Upgrade</span>
-                      <span className={`text-sm font-medium ${details.cortexCloudUpgrade === 'Yes' ? 'text-green-600' : 'text-gray-500'}`}>
+                      <span className={`text-sm font-medium ${details.cortexCloudUpgrade === 'Yes' ? 'text-emerald-700' : 'text-gray-500'}`}>
                         {details.cortexCloudUpgrade}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">Project Started</span>
-                      <span className={`text-sm font-medium ${details.projectStarted === 'Yes' ? 'text-green-600' : 'text-gray-500'}`}>
+                      <span className={`text-sm font-medium ${details.projectStarted === 'Yes' ? 'text-emerald-700' : 'text-gray-500'}`}>
                         {details.projectStarted}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">Internal Kick Off</span>
-                      <span className={`text-sm font-medium ${details.internalKickOffCompleted === 'Yes' ? 'text-green-600' : 'text-gray-500'}`}>
+                      <span className={`text-sm font-medium ${details.internalKickOffCompleted === 'Yes' ? 'text-emerald-700' : 'text-gray-500'}`}>
                         {details.internalKickOffCompleted}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">External Kick Off</span>
-                      <span className={`text-sm font-medium ${details.externalKickOffCompleted === 'Yes' ? 'text-green-600' : 'text-gray-500'}`}>
+                      <span className={`text-sm font-medium ${details.externalKickOffCompleted === 'Yes' ? 'text-emerald-700' : 'text-gray-500'}`}>
                         {details.externalKickOffCompleted}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">Technical Assessment</span>
-                      <span className={`text-sm font-medium ${details.technicalAssessmentCompleted === 'Yes' ? 'text-green-600' : 'text-gray-500'}`}>
+                      <span className={`text-sm font-medium ${details.technicalAssessmentCompleted === 'Yes' ? 'text-emerald-700' : 'text-gray-500'}`}>
                         {details.technicalAssessmentCompleted}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-500">Sessions Scheduled</span>
-                      <span className={`text-sm font-medium ${details.workingSessionsScheduled === 'Yes' ? 'text-green-600' : 'text-gray-500'}`}>
+                      <span className={`text-sm font-medium ${details.workingSessionsScheduled === 'Yes' ? 'text-emerald-700' : 'text-gray-500'}`}>
                         {details.workingSessionsScheduled}
                       </span>
                     </div>
@@ -3289,6 +3821,9 @@ const App: React.FC = () => {
               <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-2" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
                 {proServeProjects.map((project) => {
                   const details = PROSERVE_PROJECT_DETAILS[project.id];
+                  const usedSessions = details
+                    ? Math.max(0, details.totalPurchasedSessions - details.approxRemainingSessions)
+                    : 0;
                   return (
                     <button
                       key={project.id}
@@ -3298,14 +3833,20 @@ const App: React.FC = () => {
                       <div className="flex items-center justify-between">
                         <div>
                           <h3 className="font-semibold text-gray-900">{details?.assignedClient || 'Unknown Client'}</h3>
-                          <p className="text-sm text-gray-500 mt-0.5">{project.title}</p>
+                          <p className="text-sm text-gray-500 mt-0.5">{getProjectTitleWithoutClient(project.title, details?.assignedClient)}</p>
+                          {details && renderProServePhaseIndicator(details)}
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                            project.status === 'InProgress' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                            project.status === 'InProgress' ? 'bg-[#E6F2F4] text-[#1A535C]' : 'bg-orange-100 text-orange-700'
                           }`}>
-                            {project.status === 'InProgress' ? 'In Progress' : project.status === 'OnHold' ? 'On Hold' : project.status}
+                            {formatStatus(project.status)}
                           </span>
+                          {details && (
+                            <span className="text-xs text-gray-500">
+                              {usedSessions}/{details.totalPurchasedSessions} sessions
+                            </span>
+                          )}
                           <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                           </svg>
@@ -3351,7 +3892,7 @@ const App: React.FC = () => {
               {[1, 2, 3, 4, 5].map((l) => (
                 <div
                   key={l}
-                  className={`w-4 h-4 rounded-sm ${l <= level ? 'bg-purple-500' : 'bg-gray-200'}`}
+                  className={`w-4 h-4 rounded-sm ${l <= level ? 'bg-[#1A535C]' : 'bg-slate-200'}`}
                 />
               ))}
             </div>
@@ -3362,14 +3903,14 @@ const App: React.FC = () => {
               {[1, 2, 3, 4].map((l) => (
                 <div
                   key={l}
-                  className={`w-5 h-5 rounded-sm ${l <= level ? 'bg-blue-500' : 'bg-gray-200'}`}
+                  className={`w-5 h-5 rounded-sm ${l <= level ? 'bg-[#1A535C]' : 'bg-slate-200'}`}
                 />
               ))}
             </div>
           );
 
           const renderYesNo = (value: string) => (
-            <span className={`text-sm font-medium ${value === 'Yes' ? 'text-green-600' : value === 'No' ? 'text-gray-500' : 'text-yellow-600'}`}>
+            <span className={`text-sm font-medium ${value === 'Yes' ? 'text-emerald-700' : value === 'No' ? 'text-gray-500' : 'text-amber-700'}`}>
               {value}
             </span>
           );
@@ -3395,7 +3936,7 @@ const App: React.FC = () => {
                 <div className="max-h-[70vh] overflow-y-auto pr-2 space-y-6" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
                   
                   {/* Proficiency Scale Info */}
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                  <div className="bg-[#E6F2F4] rounded-lg p-4 border border-[#C5DDE2]">
                     <h3 className="font-bold text-gray-900 mb-2">Overall Experience with Prisma Cloud</h3>
                     <p className="text-xs text-gray-600 mb-2">For the following tasks, please rate your proficiency level based on this scale:</p>
                     <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
@@ -3444,7 +3985,7 @@ const App: React.FC = () => {
                   </div>
 
                   {/* Cortex Cloud Experience Header */}
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                  <div className="bg-[#E6F2F4] rounded-lg p-4 border border-[#C5DDE2]">
                     <h3 className="font-bold text-gray-900">Overall Experience with Cortex Cloud</h3>
                     <p className="text-xs text-gray-600">Please continue to use the same proficiency scale (1 - 4)</p>
                   </div>
@@ -3715,7 +4256,11 @@ const App: React.FC = () => {
       {/* Utilization Calendar Modal */}
       <Modal
         isOpen={isUtilizationCalendarOpen}
-        onClose={() => setIsUtilizationCalendarOpen(false)}
+        onClose={() => {
+          setIsUtilizationCalendarOpen(false);
+          setCurrentWeek(0);
+          setIsWeekSelectorOpen(false);
+        }}
         title={`Weekly Schedule - ${consultants.find(c => c.id === selectedConsultant)?.name || 'Consultant'}`}
         maxWidth="max-w-2xl"
       >
@@ -3723,39 +4268,271 @@ const App: React.FC = () => {
           const consultant = consultants.find(c => c.id === selectedConsultant);
           if (!consultant) return null;
           
-          const wspw = consultant.wspw;
           const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
           
-          // Create an array of 10 slots (2 per day, 5 days)
-          // Fill based on WSPW - distribute sessions across the week
-          const slots: boolean[] = Array(10).fill(false);
-          
-          // Distribute sessions evenly across the week
-          // Morning slots: 0, 2, 4, 6, 8 (indices)
-          // Afternoon slots: 1, 3, 5, 7, 9 (indices)
-          const distribution = [
-            0, 2, 4, 6, 8, // Morning sessions first (Mon-Fri mornings)
-            1, 3, 5, 7, 9  // Then afternoon sessions (Mon-Fri afternoons)
+          // Sample customers for initial booked slots
+          const sampleCustomers = [
+            'Acme Corp', 'TechFlow Inc', 'Global Systems', 'DataPrime', 'CloudNine',
+            'SecureNet', 'InnoTech', 'CyberGuard', 'NetSolutions', 'DigiSafe'
           ];
           
-          for (let i = 0; i < Math.min(wspw, 10); i++) {
-            slots[distribution[i]] = true;
+          // Week key for current week
+          const weekKey = `${consultant.id}_week${currentWeek}`;
+          const week1Key = `${consultant.id}_week0`;
+          
+          // Calculate dynamic WSPW and Utilization based on current week's slots
+          const currentWeekSlots = calendarSlots[weekKey] || [];
+          const currentWeekWspw = currentWeekSlots.filter(s => s === 'booked').length;
+          const currentWeekUtilization = Math.round((currentWeekWspw / 10) * 100);
+          const week1Slots = calendarSlots[week1Key] || [];
+          const week1Wspw = week1Slots.filter((slot) => slot === 'booked').length;
+          const week1Utilization = Math.round((week1Wspw / 10) * 100);
+          const wspwDelta = currentWeekWspw - week1Wspw;
+          const utilizationDelta = currentWeekUtilization - week1Utilization;
+          
+          // Calculate the date range for the current week
+          const getWeekDateRange = (weekOffset: number) => {
+            const today = new Date();
+            const dayOfWeek = today.getDay();
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1) + (weekOffset * 7));
+            const friday = new Date(monday);
+            friday.setDate(monday.getDate() + 4);
+            const formatDate = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return `${formatDate(monday)} - ${formatDate(friday)}`;
+          };
+          
+          // Helper to calculate weeks left for a booking
+          const calculateWeeksLeft = (booking: { weeksToBook: number; bookedDate: string }) => {
+            const bookedDate = new Date(booking.bookedDate);
+            const today = new Date();
+            const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+            const weeksElapsed = Math.floor((today.getTime() - bookedDate.getTime()) / msPerWeek);
+            return Math.max(0, booking.weeksToBook - weeksElapsed);
+          };
+          
+          const week0Key = `${consultant.id}_week0`;
+          const week0DetailsKey = `${consultant.id}_week0`;
+          const distribution = [0, 2, 4, 6, 8, 1, 3, 5, 7, 9];
+          
+          // Generate sample booking details (used for both initialization and propagation)
+          const generateSampleBookingDetails = () => {
+            const details: Record<number, { customerName: string; projectId: string; weeksToBook: number; bookedDate: string }> = {};
+            for (let i = 0; i < Math.min(consultant.wspw, 10); i++) {
+              const slotIndex = distribution[i];
+              const weeksAgo = (i % 2) + 1;
+              const sampleStartDate = new Date();
+              sampleStartDate.setDate(sampleStartDate.getDate() - (weeksAgo * 7));
+              details[slotIndex] = {
+                customerName: sampleCustomers[i % sampleCustomers.length],
+                projectId: `PRJ-${1000 + slotIndex}`,
+                weeksToBook: 4 + (i % 5),
+                bookedDate: sampleStartDate.toISOString()
+              };
+            }
+            return details;
+          };
+          
+          // Get week 0 booking details - use from state if available, otherwise generate
+          const week0BookingDetails = slotBookingDetails[week0DetailsKey] && Object.keys(slotBookingDetails[week0DetailsKey]).length > 0
+            ? slotBookingDetails[week0DetailsKey]
+            : generateSampleBookingDetails();
+          
+          // Initialize week 0 sample data in state if not exists
+          if (!slotBookingDetails[week0DetailsKey] || Object.keys(slotBookingDetails[week0DetailsKey]).length === 0) {
+            setSlotBookingDetails(prev => ({
+              ...prev,
+              [week0DetailsKey]: week0BookingDetails
+            }));
           }
+          
+          // Initialize week 0 slots if not exists
+          if (!calendarSlots[week0Key]) {
+            const initialSlots: ('booked' | 'available' | 'selected')[] = Array(10).fill('available');
+            for (let i = 0; i < Math.min(consultant.wspw, 10); i++) {
+              initialSlots[distribution[i]] = 'booked';
+            }
+            setCalendarSlots(prev => ({ ...prev, [week0Key]: initialSlots }));
+          }
+          
+          // Get or initialize calendar slots for this week
+          const getDefaultSlots = () => {
+            const initialSlots: ('booked' | 'available' | 'selected')[] = Array(10).fill('available');
+            
+            if (currentWeek === 0) {
+              // Week 0 gets pre-populated with sample booked slots based on WSPW
+              for (let i = 0; i < Math.min(consultant.wspw, 10); i++) {
+                initialSlots[distribution[i]] = 'booked';
+              }
+            } else {
+              // Future weeks: propagate bookings based on weeks left using week0BookingDetails directly
+              Object.entries(week0BookingDetails).forEach(([slotIndexStr, booking]) => {
+                const slotIndex = parseInt(slotIndexStr);
+                const weeksLeft = calculateWeeksLeft(booking);
+                // If weeksLeft > currentWeek, this slot should be booked in this week too
+                if (weeksLeft > currentWeek) {
+                  initialSlots[slotIndex] = 'booked';
+                }
+              });
+            }
+            return initialSlots;
+          };
+          
+          // For future weeks, check if we need to recalculate (cached slots might be stale)
+          const expectedBookedCount = currentWeek > 0 
+            ? Object.entries(week0BookingDetails).filter(([, booking]) => calculateWeeksLeft(booking) > currentWeek).length
+            : 0;
+          const cachedBookedCount = calendarSlots[weekKey]?.filter(s => s === 'booked').length || 0;
+          const shouldRecalculate = currentWeek > 0 && calendarSlots[weekKey] && cachedBookedCount === 0 && expectedBookedCount > 0;
+          
+          const consultantSlots = calendarSlots[weekKey] && !shouldRecalculate ? calendarSlots[weekKey] : getDefaultSlots();
+          
+          // Initialize or update slots in state
+          if (!calendarSlots[weekKey] || shouldRecalculate) {
+            setCalendarSlots(prev => ({ ...prev, [weekKey]: getDefaultSlots() }));
+          }
+          
+          // Propagate booking details to future weeks
+          const detailsKey = `${consultant.id}_week${currentWeek}`;
+          const existingBookingDetails = slotBookingDetails[detailsKey] || {};
+          
+          // For future weeks, copy booking details from week 0 for slots that are still active
+          if (currentWeek > 0 && Object.keys(existingBookingDetails).length === 0) {
+            const propagatedDetails: Record<number, { customerName: string; projectId: string; weeksToBook: number; bookedDate: string }> = {};
+            
+            Object.entries(week0BookingDetails).forEach(([slotIndexStr, booking]) => {
+              const slotIndex = parseInt(slotIndexStr);
+              const weeksLeft = calculateWeeksLeft(booking);
+              if (weeksLeft > currentWeek) {
+                propagatedDetails[slotIndex] = booking;
+              }
+            });
+            
+            if (Object.keys(propagatedDetails).length > 0) {
+              setSlotBookingDetails(prev => ({
+                ...prev,
+                [detailsKey]: propagatedDetails
+              }));
+            }
+          }
+          
+          const toggleSlot = (slotIndex: number) => {
+            const currentSlots = calendarSlots[weekKey] || consultantSlots;
+            if (currentSlots[slotIndex] === 'booked') return;
+            
+            const newSlots = [...currentSlots];
+            newSlots[slotIndex] = currentSlots[slotIndex] === 'available' ? 'selected' : 'available';
+            setCalendarSlots(prev => ({ ...prev, [weekKey]: newSlots }));
+          };
+          
+          const getSlotStatus = (slotIndex: number): 'booked' | 'available' | 'selected' => {
+            const slots = calendarSlots[weekKey] || consultantSlots;
+            return slots[slotIndex] as 'booked' | 'available' | 'selected';
+          };
+          
+          const selectedCount = (calendarSlots[weekKey] || consultantSlots).filter(s => s === 'selected').length;
           
           return (
             <div className="space-y-4">
+              {/* Week Navigation */}
+              <div className="flex items-center justify-between bg-gray-100 rounded-lg p-3">
+                <button
+                  onClick={() => setCurrentWeek(prev => Math.max(0, prev - 1))}
+                  disabled={currentWeek === 0}
+                  className={`p-2 rounded-lg transition-colors ${currentWeek === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-200'}`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                
+                <div className="relative">
+                  <button
+                    onClick={() => setIsWeekSelectorOpen(!isWeekSelectorOpen)}
+                    className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg border border-gray-200 hover:border-[#1A535C] hover:bg-[#E6F2F4] transition-colors"
+                  >
+                    <span className="font-semibold text-gray-900">Week {currentWeek + 1} of 12</span>
+                    <span className="text-sm text-gray-500">({getWeekDateRange(currentWeek)})</span>
+                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${isWeekSelectorOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  
+                  {isWeekSelectorOpen && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50 min-w-[200px]">
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((week) => (
+                        <button
+                          key={week}
+                          onClick={() => {
+                            setCurrentWeek(week);
+                            setIsWeekSelectorOpen(false);
+                          }}
+                          className={`w-full px-4 py-2 text-left hover:bg-gray-100 transition-colors ${currentWeek === week ? 'bg-[#E6F2F4] text-[#1A535C]' : 'text-gray-700'}`}
+                        >
+                          <span className="font-medium">Week {week + 1}</span>
+                          <span className="text-sm text-gray-500 ml-2">{getWeekDateRange(week)}</span>
+                          {week === 0 && <span className="text-xs text-[#1A535C] ml-2">(Current)</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                <button
+                  onClick={() => setCurrentWeek(prev => Math.min(11, prev + 1))}
+                  disabled={currentWeek === 11}
+                  className={`p-2 rounded-lg transition-colors ${currentWeek === 11 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-200'}`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+              
               {/* Header Info */}
               <div className="flex items-center justify-between bg-gray-50 rounded-lg p-4">
                 <div>
                   <p className="text-sm text-gray-600">Working Sessions Per Week (WSPW)</p>
-                  <p className="text-2xl font-bold text-gray-900">{wspw} <span className="text-sm font-normal text-gray-500">of 10 sessions</span></p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      key={`wspw-${currentWeek}`}
+                      className={`inline-flex items-center rounded-full px-3 py-1 text-lg font-bold transition-all duration-300 ${getWspwColor(currentWeekWspw)} ${
+                        isWeekMetricFlashing ? 'brightness-110 ring-2 ring-[#1A535C]/20' : ''
+                      }`}
+                    >
+                      WSPW: {currentWeekWspw}
+                    </span>
+                    <span className="text-sm text-gray-500">of 10 sessions</span>
+                    {currentWeek > 0 && wspwDelta !== 0 && (
+                      <span className={`text-xs font-medium ${wspwDelta < 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        ({wspwDelta > 0 ? `+${wspwDelta}` : wspwDelta} from Wk 1)
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600">Utilization</p>
-                  <p className={`text-2xl font-bold ${consultant.utilization >= 80 ? 'text-red-600' : consultant.utilization >= 60 ? 'text-yellow-600' : 'text-green-600'}`}>
-                    {consultant.utilization}%
-                  </p>
+                  <div className="flex items-center gap-2 justify-end flex-wrap">
+                    <span
+                      key={`util-${currentWeek}`}
+                      className={`inline-flex items-center rounded-full px-3 py-1 text-lg font-bold transition-all duration-300 ${getUtilizationColor(currentWeekUtilization)} ${
+                        isWeekMetricFlashing ? 'brightness-110 ring-2 ring-[#1A535C]/20' : ''
+                      }`}
+                    >
+                      Utilization: {currentWeekUtilization}%
+                    </span>
+                    {currentWeek > 0 && utilizationDelta !== 0 && (
+                      <span className={`text-xs font-medium ${utilizationDelta < 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        ({utilizationDelta > 0 ? `+${utilizationDelta}` : utilizationDelta}% from Wk 1)
+                      </span>
+                    )}
+                  </div>
                 </div>
+              </div>
+              
+              {/* Instructions */}
+              <div className="bg-[#E6F2F4] border border-[#CFE4E8] rounded-lg p-3 text-sm text-[#1A535C]">
+                <span className="font-medium">Click on available slots to select sessions.</span> Selected sessions are pending confirmation.
               </div>
 
               {/* Calendar Grid */}
@@ -3773,23 +4550,59 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-5 border-b border-gray-200">
                   {days.map((day, dayIndex) => {
                     const slotIndex = dayIndex * 2; // Morning slot
-                    const isBooked = slots[slotIndex];
+                    const status = getSlotStatus(slotIndex);
+                    const bookingInfo = slotBookingDetails[detailsKey]?.[slotIndex];
                     return (
                       <div 
                         key={`${day}-am`} 
-                        className={`p-4 border-r border-gray-200 last:border-r-0 ${isBooked ? 'bg-blue-100' : 'bg-white'}`}
+                        onClick={() => {
+                          if (status === 'booked') {
+                            setSelectedSlotIndex(slotIndex);
+                            setSelectedWeekForDetails(currentWeek);
+                            setIsSessionDetailsOpen(true);
+                          } else {
+                            toggleSlot(slotIndex);
+                          }
+                        }}
+                        className={`p-3 border-r border-gray-200 last:border-r-0 transition-all ${
+                          status === 'booked' 
+                            ? 'bg-[#E6F2F4] cursor-pointer hover:bg-[#D9EBEE]' 
+                            : status === 'selected'
+                            ? 'bg-amber-50 border border-amber-200 cursor-pointer hover:bg-amber-100'
+                            : 'bg-white cursor-pointer hover:bg-gray-50'
+                        }`}
                       >
                         <div className="text-xs text-gray-500 mb-1">8:00 AM - 12:00 PM</div>
-                        <div className={`text-sm font-medium ${isBooked ? 'text-blue-700' : 'text-gray-400'}`}>
-                          {isBooked ? (
+                        <div className={`text-sm font-medium ${
+                          status === 'booked' 
+                            ? 'text-[#1A535C]' 
+                            : status === 'selected'
+                            ? 'text-amber-700'
+                            : 'text-slate-400'
+                        }`}>
+                          {status === 'booked' ? (
+                            <div>
+                              <div className="flex items-center gap-1">
+                                <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                <span className="text-xs truncate" title={bookingInfo?.customerName || 'Booked'}>{bookingInfo?.customerName || 'Booked'}</span>
+                              </div>
+                            </div>
+                          ) : status === 'selected' ? (
                             <div className="flex items-center gap-1">
                               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
                               </svg>
-                              Booked
+                              Selected
                             </div>
                           ) : (
-                            'Available'
+                            <div className="flex items-center gap-1">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                              </svg>
+                              Available
+                            </div>
                           )}
                         </div>
                       </div>
@@ -3801,23 +4614,59 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-5">
                   {days.map((day, dayIndex) => {
                     const slotIndex = dayIndex * 2 + 1; // Afternoon slot
-                    const isBooked = slots[slotIndex];
+                    const status = getSlotStatus(slotIndex);
+                    const bookingInfo = slotBookingDetails[detailsKey]?.[slotIndex];
                     return (
                       <div 
                         key={`${day}-pm`} 
-                        className={`p-4 border-r border-gray-200 last:border-r-0 ${isBooked ? 'bg-blue-100' : 'bg-white'}`}
+                        onClick={() => {
+                          if (status === 'booked') {
+                            setSelectedSlotIndex(slotIndex);
+                            setSelectedWeekForDetails(currentWeek);
+                            setIsSessionDetailsOpen(true);
+                          } else {
+                            toggleSlot(slotIndex);
+                          }
+                        }}
+                        className={`p-3 border-r border-gray-200 last:border-r-0 transition-all ${
+                          status === 'booked' 
+                            ? 'bg-[#E6F2F4] cursor-pointer hover:bg-[#D9EBEE]' 
+                            : status === 'selected'
+                            ? 'bg-amber-50 border border-amber-200 cursor-pointer hover:bg-amber-100'
+                            : 'bg-white cursor-pointer hover:bg-gray-50'
+                        }`}
                       >
                         <div className="text-xs text-gray-500 mb-1">1:00 PM - 5:00 PM</div>
-                        <div className={`text-sm font-medium ${isBooked ? 'text-blue-700' : 'text-gray-400'}`}>
-                          {isBooked ? (
+                        <div className={`text-sm font-medium ${
+                          status === 'booked' 
+                            ? 'text-[#1A535C]' 
+                            : status === 'selected'
+                            ? 'text-amber-700'
+                            : 'text-slate-400'
+                        }`}>
+                          {status === 'booked' ? (
+                            <div>
+                              <div className="flex items-center gap-1">
+                                <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                <span className="text-xs truncate" title={bookingInfo?.customerName || 'Booked'}>{bookingInfo?.customerName || 'Booked'}</span>
+                              </div>
+                            </div>
+                          ) : status === 'selected' ? (
                             <div className="flex items-center gap-1">
                               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clipRule="evenodd" />
                               </svg>
-                              Booked
+                              Selected
                             </div>
                           ) : (
-                            'Available'
+                            <div className="flex items-center gap-1">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                              </svg>
+                              Available
+                            </div>
                           )}
                         </div>
                       </div>
@@ -3827,10 +4676,14 @@ const App: React.FC = () => {
               </div>
 
               {/* Legend */}
-              <div className="flex items-center justify-center gap-6 text-sm">
+              <div className="flex items-center justify-center gap-4 text-sm flex-wrap">
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-blue-100 border border-blue-200 rounded"></div>
-                  <span className="text-gray-600">Booked Session (4 hours)</span>
+                  <div className="w-4 h-4 bg-[#E6F2F4] border border-[#CFE4E8] rounded"></div>
+                  <span className="text-gray-600">Booked</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-amber-50 border border-amber-200 rounded"></div>
+                  <span className="text-gray-600">Selected</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-white border border-gray-200 rounded"></div>
@@ -3838,11 +4691,584 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Close Button */}
-              <div className="flex justify-end pt-4 border-t border-gray-200">
+              {/* Action Buttons */}
+              <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+                <div className="text-sm text-gray-600">
+                  {selectedCount > 0 && (
+                    <span className="text-[#1A535C] font-medium">{selectedCount} session{selectedCount !== 1 ? 's' : ''} selected</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  {selectedCount > 0 && (
+                    <button
+                      onClick={() => {
+                        const currentSlots = calendarSlots[weekKey] || consultantSlots;
+                        const selectedIndices = currentSlots
+                          .map((slot, index) => (slot === 'selected' ? index : -1))
+                          .filter(index => index !== -1);
+                        setPendingBookingSlotIndices(selectedIndices);
+                        setBookingFormData({ customerName: '', projectId: '', weeksToBook: 1 });
+                        setBookingError('');
+                        setIsManualBookingEntry(false);
+                        setIsBookingFormOpen(true);
+                      }}
+                      className="px-4 py-2 bg-[#1A535C] text-white font-medium rounded-lg hover:bg-[#143F47] transition-colors"
+                    >
+                      Next
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsUtilizationCalendarOpen(false)}
+                    className="px-6 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* Booking Form Modal */}
+      <Modal
+        isOpen={isBookingFormOpen}
+        onClose={() => {
+          setIsBookingFormOpen(false);
+          setPendingBookingSlotIndices([]);
+          setBookingError('');
+          setIsManualBookingEntry(false);
+        }}
+        title="Book Sessions"
+        maxWidth="max-w-md"
+      >
+        {(() => {
+          const consultant = consultants.find(c => c.id === selectedConsultant);
+          const weekKey = consultant ? `${consultant.id}_week${currentWeek}` : '';
+          const selectedCount = consultant && calendarSlots[weekKey] 
+            ? calendarSlots[weekKey].filter(s => s === 'selected').length 
+            : 0;
+          const consultantProServeProjects = consultant
+            ? projects.filter(
+                (project) =>
+                  project.assignedTo === consultant.name &&
+                  project.type === 'ProServe' &&
+                  Boolean(PROSERVE_PROJECT_DETAILS[project.id])
+              )
+            : [];
+          const hasProjectDropdown = consultantProServeProjects.length > 0;
+          const selectedProjectDetails = PROSERVE_PROJECT_DETAILS[bookingFormData.projectId];
+          const selectedProject = consultantProServeProjects.find((project) => project.id === bookingFormData.projectId);
+          const showProjectDropdown = hasProjectDropdown && !isManualBookingEntry;
+          const remainingSessions = selectedProjectDetails?.approxRemainingSessions;
+          const remainingSessionsColorClass = typeof remainingSessions === 'number'
+            ? remainingSessions > 5
+              ? 'text-emerald-600'
+              : remainingSessions >= 2
+                ? 'text-amber-600'
+                : 'text-red-600'
+            : 'text-gray-500';
+          
+          return (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                You are booking <span className="font-semibold text-[#1A535C]">{selectedCount} session{selectedCount !== 1 ? 's' : ''}</span> per week for <span className="font-semibold">{consultant?.name}</span>.
+              </p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Customer Name
+                  </label>
+                  <input
+                    type="text"
+                    value={bookingFormData.customerName}
+                    onChange={(e) => {
+                      setBookingError('');
+                      setBookingFormData(prev => ({ ...prev, customerName: e.target.value }));
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1A535C] focus:border-[#1A535C] outline-none transition-all"
+                    placeholder="Enter customer name"
+                  />
+                </div>
+                
+                {showProjectDropdown ? (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Project
+                      </label>
+                      <select
+                        value={bookingFormData.projectId}
+                        onChange={(e) => {
+                          const selectedProjectId = e.target.value;
+                          const projectDetails = PROSERVE_PROJECT_DETAILS[selectedProjectId];
+                          setBookingError('');
+                          setBookingFormData(prev => ({
+                            ...prev,
+                            projectId: selectedProjectId,
+                            customerName: projectDetails?.assignedClient ?? prev.customerName,
+                          }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1A535C] focus:border-[#1A535C] outline-none transition-all"
+                      >
+                        <option value="">Select a project...</option>
+                        {consultantProServeProjects.map((project) => {
+                          const details = PROSERVE_PROJECT_DETAILS[project.id];
+                          return (
+                            <option key={project.id} value={project.id}>
+                              {details.assignedClient} - {getProjectTitleWithoutClient(project.title, details.assignedClient)} ({details.approxRemainingSessions} of {details.totalPurchasedSessions} remaining)
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {selectedProject && selectedProjectDetails && (
+                      <div className="space-y-2">
+                        <p className={`text-sm font-medium ${remainingSessionsColorClass}`}>
+                          {selectedProjectDetails.approxRemainingSessions} of {selectedProjectDetails.totalPurchasedSessions} sessions remaining
+                        </p>
+                        <div className="flex gap-1 flex-wrap">
+                          {selectedProjectDetails.areasOfSupport.map((area) => (
+                            <span key={area} className="px-1.5 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-700">
+                              {area}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsManualBookingEntry(true);
+                        setBookingFormData(prev => ({ ...prev, projectId: '' }));
+                      }}
+                      className="text-xs text-[#1A535C] hover:text-[#143F47] underline underline-offset-2"
+                    >
+                      Book for a different customer
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {!hasProjectDropdown && (
+                      <p className="text-sm text-gray-500">No ProServe projects available</p>
+                    )}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Project ID <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={bookingFormData.projectId}
+                        onChange={(e) => setBookingFormData(prev => ({ ...prev, projectId: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1A535C] focus:border-[#1A535C] outline-none transition-all"
+                        placeholder="Enter project ID"
+                      />
+                    </div>
+                    {hasProjectDropdown && isManualBookingEntry && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsManualBookingEntry(false);
+                          setBookingFormData(prev => ({ ...prev, projectId: '' }));
+                        }}
+                        className="text-xs text-[#1A535C] hover:text-[#143F47] underline underline-offset-2"
+                      >
+                        Back to project list
+                      </button>
+                    )}
+                  </div>
+                )}
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Number of Weeks to Book
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="12"
+                    value={bookingFormData.weeksToBook}
+                    onChange={(e) => setBookingFormData(prev => ({
+                      ...prev,
+                      weeksToBook: Math.min(12, Math.max(1, parseInt(e.target.value) || 1))
+                    }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1A535C] focus:border-[#1A535C] outline-none transition-all"
+                  />
+                </div>
+              </div>
+              
+              <div className="text-sm">
+                <p className="text-gray-700">
+                  <span className="font-medium">Note:</span> Sessions will be scheduled in {consultant?.name}'s Google Calendar
+                </p>
+              </div>
+
+              {bookingError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  {bookingError}
+                </p>
+              )}
+              
+              <div className="flex justify-end gap-2 pt-4 border-t border-gray-200">
                 <button
-                  onClick={() => setIsUtilizationCalendarOpen(false)}
-                  className="px-6 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                  onClick={() => {
+                    setIsBookingFormOpen(false);
+                    setPendingBookingSlotIndices([]);
+                    setBookingError('');
+                    setIsManualBookingEntry(false);
+                  }}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => {
+                    if (!bookingFormData.customerName.trim()) {
+                      setBookingError('Please enter a customer name.');
+                      return;
+                    }
+
+                    const weeksToBook = Math.min(12, Math.max(1, bookingFormData.weeksToBook || 1));
+                    if (weeksToBook < 1 || weeksToBook > 12) {
+                      setBookingError('Please enter a number of weeks between 1 and 12.');
+                      return;
+                    }
+                    
+                    const consultantId = selectedConsultant;
+                    if (!consultantId) {
+                      setBookingError('No consultant selected. Please close and reopen booking.');
+                      return;
+                    }
+                    
+                    const weekKey = `${consultantId}_week${currentWeek}`;
+                    const currentSlots = calendarSlots[weekKey] || [];
+                    
+                    // Find which slots are selected
+                    const selectedSlotIndices: number[] = [];
+                    currentSlots.forEach((slot, index) => {
+                      if (slot === 'selected') {
+                        selectedSlotIndices.push(index);
+                      }
+                    });
+
+                    const slotIndicesToBook = selectedSlotIndices.length > 0
+                      ? selectedSlotIndices
+                      : pendingBookingSlotIndices;
+
+                    if (slotIndicesToBook.length === 0) {
+                      setBookingError('Please select at least one available session before confirming.');
+                      return;
+                    }
+                    
+                    // Create booking details with bookedDate set to the start of the booking week
+                    const bookedDate = new Date();
+                    // Adjust bookedDate to represent the start of the week being booked
+                    const dayOfWeek = bookedDate.getDay();
+                    const mondayOfCurrentWeek = new Date(bookedDate);
+                    mondayOfCurrentWeek.setDate(bookedDate.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1) + (currentWeek * 7));
+                    
+                    const bookingDetails = {
+                      customerName: bookingFormData.customerName,
+                      projectId: bookingFormData.projectId,
+                      weeksToBook,
+                      bookedDate: mondayOfCurrentWeek.toISOString()
+                    };
+                    
+                    // Update slots and booking details for current week and future weeks based on weeksToBook
+                    const endWeek = Math.min(currentWeek + weeksToBook, 12);
+                    
+                    setCalendarSlots(prev => {
+                      const updated = { ...prev };
+                      for (let week = currentWeek; week < endWeek; week++) {
+                        const wKey = `${consultantId}_week${week}`;
+                        const slots = updated[wKey] || Array(10).fill('available');
+                        const newSlots = [...slots];
+                        slotIndicesToBook.forEach(slotIdx => {
+                          newSlots[slotIdx] = 'booked';
+                        });
+                        updated[wKey] = newSlots as ('booked' | 'available' | 'selected')[];
+                      }
+                      return updated;
+                    });
+                    
+                    setSlotBookingDetails(prev => {
+                      const updated = { ...prev };
+                      for (let week = currentWeek; week < endWeek; week++) {
+                        const dKey = `${consultantId}_week${week}`;
+                        const weekDetails = { ...(updated[dKey] || {}) };
+                        slotIndicesToBook.forEach(slotIdx => {
+                          weekDetails[slotIdx] = bookingDetails;
+                        });
+                        updated[dKey] = weekDetails;
+                      }
+                      return updated;
+                    });
+                    
+                    // Calculate new WSPW and utilization based on week 0 (current week)
+                    if (currentWeek === 0) {
+                      const week0Slots = calendarSlots[`${consultantId}_week0`] || [];
+                      const newWspw = week0Slots.filter(s => s === 'booked').length + slotIndicesToBook.length;
+                      const newUtilization = Math.round((newWspw / 10) * 100);
+                      setConsultants(prev => prev.map(c => 
+                        c.id === consultantId 
+                          ? { ...c, wspw: newWspw, utilization: newUtilization }
+                          : c
+                      ));
+                    }
+                    
+                    setBookingError('');
+                    setPendingBookingSlotIndices([]);
+                    setIsBookingFormOpen(false);
+                  }}
+                  className="px-4 py-2 bg-[#1A535C] text-white font-medium rounded-lg hover:bg-[#143F47] transition-colors"
+                >
+                  Confirm Selection
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* Session Details Modal */}
+      <Modal
+        isOpen={isSessionDetailsOpen}
+        onClose={() => {
+          setIsSessionDetailsOpen(false);
+          setShowRemovalOptions(false);
+        }}
+        title="Session Details"
+        maxWidth="max-w-md"
+      >
+        {(() => {
+          const consultant = consultants.find(c => c.id === selectedConsultant);
+          if (!consultant || selectedSlotIndex === null) return null;
+          
+          const detailsKey = `${consultant.id}_week${selectedWeekForDetails}`;
+          const weekKey = `${consultant.id}_week${selectedWeekForDetails}`;
+          const bookingInfo = slotBookingDetails[detailsKey]?.[selectedSlotIndex];
+          const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+          const dayIndex = Math.floor(selectedSlotIndex / 2);
+          const isMorning = selectedSlotIndex % 2 === 0;
+          const dayName = days[dayIndex];
+          const timeSlot = isMorning ? '8:00 AM - 12:00 PM' : '1:00 PM - 5:00 PM';
+          
+          // Calculate the date for this session
+          const getSessionDate = () => {
+            const today = new Date();
+            const currentDayOfWeek = today.getDay();
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - (currentDayOfWeek === 0 ? 6 : currentDayOfWeek - 1) + (selectedWeekForDetails * 7));
+            const sessionDate = new Date(monday);
+            sessionDate.setDate(monday.getDate() + dayIndex);
+            return sessionDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+          };
+          
+          return (
+            <div className="space-y-4">
+              {/* Session Time */}
+              <div className="bg-[#E6F2F4] border border-[#CFE4E8] rounded-lg p-4">
+                <div className="flex items-center gap-2 text-[#1A535C]">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="font-semibold">{getSessionDate()}</span>
+                  <span className="text-[#1A535C]/60">|</span>
+                  <span>{timeSlot}</span>
+                </div>
+                {selectedWeekForDetails > 0 && (
+                  <div className="mt-1 text-xs text-[#1A535C]">Week {selectedWeekForDetails + 1}</div>
+                )}
+              </div>
+              
+              {/* Session Info */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Customer</label>
+                  <p className="text-gray-900 font-semibold">{bookingInfo?.customerName || 'N/A'}</p>
+                </div>
+                
+                {bookingInfo?.projectId && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Project ID</label>
+                    <p className="text-gray-900">{bookingInfo.projectId}</p>
+                  </div>
+                )}
+                
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Consultant</label>
+                  <p className="text-gray-900">{consultant.name}</p>
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Duration</label>
+                  <p className="text-gray-900">4 hours</p>
+                </div>
+                
+                {bookingInfo?.weeksToBook && bookingInfo?.bookedDate && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Remaining</label>
+                    {(() => {
+                      const bookedDate = new Date(bookingInfo.bookedDate);
+                      const today = new Date();
+                      const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+                      const weeksElapsed = Math.floor((today.getTime() - bookedDate.getTime()) / msPerWeek);
+                      const weeksLeftFromToday = Math.max(0, bookingInfo.weeksToBook - weeksElapsed);
+                      // Adjust for the week being viewed (subtract the week offset)
+                      const weeksRemaining = Math.max(0, weeksLeftFromToday - selectedWeekForDetails);
+                      const endDate = new Date(today);
+                      endDate.setDate(today.getDate() + (weeksRemaining * 7));
+                      const formattedEndDate = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      const valueClassName =
+                        weeksRemaining <= 1 ? 'text-red-600' : weeksRemaining <= 2 ? 'text-amber-700' : 'text-gray-900';
+
+                      if (weeksRemaining === 0) {
+                        return <p className="font-semibold text-red-600">Last week</p>;
+                      }
+
+                      return (
+                        <p className={`font-semibold ${valueClassName}`}>
+                          {weeksRemaining} week{weeksRemaining !== 1 ? 's' : ''} remaining (ends {formattedEndDate})
+                        </p>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+              
+              {/* Note */}
+              <div className="text-sm text-gray-600">
+                <span className="font-medium">Note:</span> Changes will be reflected in {consultant.name}'s Google Calendar
+              </div>
+              
+              {/* Actions */}
+              <div className="space-y-3 pt-4 border-t border-gray-200">
+                {!showRemovalOptions ? (
+                  <button
+                    onClick={() => setShowRemovalOptions(true)}
+                    className="w-full px-3 py-2 bg-red-50 text-red-700 text-sm font-medium rounded-lg border border-red-200 hover:bg-red-100 transition-colors"
+                  >
+                    Remove
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => {
+                        // Remove the session from this week only
+                        const slotIdx = selectedSlotIndex;
+
+                        setCalendarSlots((prev) => {
+                          const currentSlots = prev[weekKey] || [];
+                          const newSlots = [...currentSlots];
+                          newSlots[slotIdx] = 'available';
+                          return { ...prev, [weekKey]: newSlots };
+                        });
+
+                        setSlotBookingDetails((prev) => {
+                          const weekDetails = { ...(prev[detailsKey] || {}) };
+                          delete weekDetails[slotIdx];
+                          return { ...prev, [detailsKey]: weekDetails };
+                        });
+
+                        const week0Key = `${consultant.id}_week0`;
+                        const week0Slots = calendarSlots[week0Key] || [];
+                        const newBookedCount =
+                          selectedWeekForDetails === 0
+                            ? week0Slots.filter((s, i) => s === 'booked' && i !== slotIdx).length
+                            : week0Slots.filter((s) => s === 'booked').length;
+                        const newUtilization = Math.round((newBookedCount / 10) * 100);
+
+                        setConsultants((prev) =>
+                          prev.map((c) =>
+                            c.id === consultant.id ? { ...c, wspw: newBookedCount, utilization: newUtilization } : c,
+                          ),
+                        );
+
+                        setShowRemovalOptions(false);
+                        setIsSessionDetailsOpen(false);
+                      }}
+                      className="w-full text-left bg-white border border-red-200 text-red-700 rounded-lg p-3 hover:bg-red-50 transition-colors"
+                    >
+                      <div className="font-medium">Cancel This Session Only</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Removes this session for the current week only. All other weeks remain scheduled.
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        // Remove the session from this week and all future weeks
+                        const slotIdx = selectedSlotIndex;
+
+                        setCalendarSlots((prev) => {
+                          const updated = { ...prev };
+                          for (let week = selectedWeekForDetails; week < 12; week++) {
+                            const wKey = `${consultant.id}_week${week}`;
+                            if (updated[wKey]) {
+                              const newSlots = [...updated[wKey]];
+                              newSlots[slotIdx] = 'available';
+                              updated[wKey] = newSlots;
+                            }
+                          }
+                          return updated;
+                        });
+
+                        setSlotBookingDetails((prev) => {
+                          const updated = { ...prev };
+                          for (let week = selectedWeekForDetails; week < 12; week++) {
+                            const dKey = `${consultant.id}_week${week}`;
+                            if (updated[dKey]) {
+                              const weekDetails = { ...updated[dKey] };
+                              delete weekDetails[slotIdx];
+                              updated[dKey] = weekDetails;
+                            }
+                          }
+                          return updated;
+                        });
+
+                        const week0Key = `${consultant.id}_week0`;
+                        const week0Slots = calendarSlots[week0Key] || [];
+                        const newBookedCount =
+                          selectedWeekForDetails === 0
+                            ? week0Slots.filter((s, i) => s === 'booked' && i !== slotIdx).length
+                            : week0Slots.filter((s) => s === 'booked').length;
+                        const newUtilization = Math.round((newBookedCount / 10) * 100);
+
+                        setConsultants((prev) =>
+                          prev.map((c) =>
+                            c.id === consultant.id ? { ...c, wspw: newBookedCount, utilization: newUtilization } : c,
+                          ),
+                        );
+
+                        setShowRemovalOptions(false);
+                        setIsSessionDetailsOpen(false);
+                      }}
+                      className="w-full text-left bg-white border border-red-200 text-red-700 rounded-lg p-3 hover:bg-red-50 transition-colors"
+                    >
+                      <div className="font-medium">Cancel All Remaining Sessions</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Removes this session for this week and all future weeks. Use when the project has ended.
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => setShowRemovalOptions(false)}
+                      className="text-xs text-gray-500 hover:text-gray-700 hover:underline transition-colors"
+                    >
+                      Never mind
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => {
+                    setShowRemovalOptions(false);
+                    setIsSessionDetailsOpen(false);
+                  }}
+                  className="w-full px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors"
                 >
                   Close
                 </button>

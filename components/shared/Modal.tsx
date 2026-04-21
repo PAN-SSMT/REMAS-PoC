@@ -7,6 +7,7 @@ interface ModalProps {
   titleRight?: React.ReactNode;
   children: React.ReactNode;
   maxWidth?: string;
+  zIndexClass?: string;
   headerPaddingClass?: string;
   headerCenter?: React.ReactNode;
   hideBorder?: boolean;
@@ -19,6 +20,7 @@ const Modal: React.FC<ModalProps> = ({
   titleRight,
   children,
   maxWidth = 'max-w-4xl',
+  zIndexClass = 'z-50',
   headerPaddingClass = 'p-5',
   headerCenter,
   hideBorder = false,
@@ -47,7 +49,7 @@ const Modal: React.FC<ModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+      className={`fixed inset-0 ${zIndexClass} flex items-center justify-center bg-black bg-opacity-50 p-4`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

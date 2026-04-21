@@ -15,7 +15,7 @@ const AppNavigation: React.FC<AppNavigationProps> = ({ currentApp }) => {
         href={novaPath}
         className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
           currentApp === 'NOVA'
-            ? 'bg-white text-blue-600 shadow-sm'
+            ? 'bg-white text-[#1A535C] shadow-sm'
             : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
         }`}
       >
@@ -25,7 +25,7 @@ const AppNavigation: React.FC<AppNavigationProps> = ({ currentApp }) => {
         href={remasPath}
         className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
           currentApp === 'REMAS'
-            ? 'bg-white text-blue-600 shadow-sm'
+            ? 'bg-white text-[#1A535C] shadow-sm'
             : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
         }`}
       >
